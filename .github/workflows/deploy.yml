@@ -1,0 +1,57 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 配置 SSH 私钥
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: 信任服务器指纹
+        run: |
+          mkdir -p ~/.ssh
+          echo "正在连接 ${{ secrets.SSH_HOST }}:22 ..."
+          if ! ssh-keyscan -H -T 10 ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "❌ 连不上 ${{ secrets.SSH_HOST }}:22(10 秒超时)"
+            echo "👉 请检查云服务器安全组是否放行入站 TCP 22 端口(源 0.0.0.0/0)"
+            exit 1
+          fi
+          echo "✓ 服务器指纹已记录"
+
+      - name: 同步代码到服务器
+        run: |
+          HOST_ARG="${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}"
+          ssh $HOST_ARG "mkdir -p /opt/wafer-label/app /opt/wafer-label/data /opt/wafer-label/backup /opt/wafer-label/venv"
+          rsync -avz --delete app/       $HOST_ARG:/opt/wafer-label/app/app/
+          rsync -avz --delete static/    $HOST_ARG:/opt/wafer-label/app/static/
+          rsync -avz --delete scripts/   $HOST_ARG:/opt/wafer-label/app/scripts/
+          rsync -avz --delete deploy/    $HOST_ARG:/opt/wafer-label/app/deploy/
+          rsync -avz requirements.txt    $HOST_ARG:/opt/wafer-label/app/requirements.txt
+
+      - name: 执行部署脚本
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "bash /opt/wafer-label/app/deploy/deploy.sh"
+
+      - name: 公网健康检查
+        run: |
+          sleep 2
+          curl -sSf -m 10 "https://wafer.echeng.xyz/health" -o /dev/null \
+            && echo "✅ https://wafer.echeng.xyz 正常" \
+            || (echo "⚠ 公网访问异常"; exit 1)

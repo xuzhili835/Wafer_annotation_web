@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="%230f766e"/><text x="16" y="21" font-size="12" font-weight="800" text-anchor="middle" fill="white" font-family="Segoe UI,sans-serif">W</text></svg>' />
+<title>光伏硅片标注站 · Wafer Annotation</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<!-- 登录弹层 -->
+<div id="loginLayer" class="login-layer hidden">
+  <div class="login-card">
+    <div class="logo-mark big">W</div>
+    <h1>光伏硅片缺陷标注站</h1>
+    <p class="hint">输入你的个人令牌进入(每人一枚、长期有效;浏览器保存 7 天)。</p>
+    <input id="tokenInput" type="password" placeholder="形如 hce_Ab3xK9mQ" autocomplete="off" />
+    <button id="btnLogin" class="btn btn-primary">进入</button>
+    <p id="loginMsg" class="msg err hidden"></p>
+    <p class="hint small">令牌形如 <code>缩写_8位随机串</code>,找组长领取。输了错的上不了车。</p>
+  </div>
+</div>
+
+<div class="app">
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-mark">W</div>
+      <div><strong>光伏硅片标注站</strong><span>多人协作 · 盲审 · 留痕</span></div>
+    </div>
+    <nav class="nav" id="nav">
+      <button data-view="annotate" class="active">标注</button>
+      <button data-view="progress">进度</button>
+      <button data-view="review">审阅仲裁</button>
+      <button data-view="export">导出</button>
+      <button data-view="help">帮助与方案</button>
+    </nav>
+    <div class="sidefoot">
+      <div id="whoami" class="whoami hidden">已登录:<b></b> <button id="btnLogout" class="linkbtn">退出</button></div>
+      <div>每张图 2 人盲标打底 · 分歧加第三人<br>多数票定稿 · 平票全员盲审 · 全程留痕</div>
+    </div>
+  </aside>
+
+  <main>
+    <!-- 标注视图 -->
+    <section id="view-annotate">
+      <div class="topbar">
+        <div><h1>标注</h1><p id="annSub">加载队列…</p></div>
+        <div class="toolbar">
+          <button class="btn" id="btnTut">新手引导</button>
+          <button class="btn" id="btnRefreshQ">刷新队列</button>
+        </div>
+      </div>
+      <div class="ann-grid">
+        <div class="canvas-wrap card-dark">
+          <canvas id="cv" width="640" height="640"></canvas>
+          <div class="canvas-foot">
+            <span id="cvStem" class="stem-tag">-</span>
+            <span id="cvPos" class="pos-tag"></span>
+          </div>
+        </div>
+        <div class="side-panel">
+          <div class="card">
+            <h2>缺陷类别 <span class="hint inline">快捷键见按钮角标</span></h2>
+            <div id="codeBtns" class="code-btns"></div>
+            <label class="checkline"><input type="checkbox" id="ckEmpty" /> 本图无缺陷(N)—— 不画任何框</label>
+            <p id="codeTips" class="tips"></p>
+          </div>
+          <div class="card">
+            <h2>本图操作</h2>
+            <div class="toolbar">
+              <button class="btn" id="btnUndo">撤销(Ctrl+Z)</button>
+              <button class="btn" id="btnClear">清空本图</button>
+              <button class="btn" id="btnSkip">跳过 →</button>
+              <button class="btn btn-primary" id="btnSubmit">提交本图(Enter)</button>
+            </div>
+            <p class="hint small">每画一笔自动存草稿;提交后进入盲审流程,可「回看改判」。</p>
+            <div id="annMsg" class="msg hidden"></div>
+          </div>
+          <div class="card">
+            <h2>参照样例 <span class="hint inline">来自测试集(框为产线标注)</span></h2>
+            <div id="refBox" class="ref-grid"><p class="hint">先选一个类别</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>回看改判 <span class="hint inline">点开重新提交将替换你此前的标注(旧记录留痕不删)</span></h2>
+        <div id="myReviseBox" class="chips"></div>
+      </div>
+    </section>
+
+    <!-- 进度视图 -->
+    <section id="view-progress" class="hidden">
+      <div class="topbar"><div><h1>进度</h1><p>510 张训练图 · 每格一张,点格跳转</p></div></div>
+      <div id="progKpis" class="kpis"></div>
+      <div class="box info" style="margin-bottom:14px"><b>协作机制</b> · 每张图 2 人盲标打底 → 分歧自动加第三人 →
+        多数票定稿,平票进全员盲审仲裁(定稿前匿名)→ 任何人可异议重审 → 封板(3/4 同意)后导出训练终版。全程留痕,可回放。</div>
+      <div class="card">
+        <h2>全库热力 <span class="legend">
+          <i class="lg lg-pending">未标</i><i class="lg lg-wip">1人已标</i><i class="lg lg-ready">多份一致</i>
+          <i class="lg lg-conflict">分歧</i><i class="lg lg-final">已定稿</i></span></h2>
+        <div id="heat" class="heat"></div>
+      </div>
+    </section>
+
+    <!-- 审阅仲裁视图 -->
+    <section id="view-review" class="hidden">
+      <div class="topbar"><div><h1>审阅仲裁</h1><p>分歧图盲审投票 · 平票进仲裁 · 异议重审</p></div>
+        <div class="toolbar"><button class="btn" id="btnLoadArb">刷新仲裁池</button></div></div>
+      <div class="review-grid">
+        <div class="card">
+          <h2>待决列表 <span id="arbCount" class="pill todo">0</span></h2>
+          <div id="arbList" class="arb-list"><p class="hint">加载中…</p></div>
+        </div>
+        <div class="card">
+          <h2 id="rvTitle">盲审面板</h2>
+          <div class="rv-wrap">
+            <div class="canvas-wrap small"><canvas id="rv" width="640" height="640"></canvas></div>
+            <div id="rvCands" class="rv-cands"><p class="hint">从左侧选一张图</p></div>
+          </div>
+          <div id="rvMsg" class="msg hidden"></div>
+          <div id="rvDisputes"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 导出视图 -->
+    <section id="view-export" class="hidden">
+      <div class="topbar"><div><h1>导出</h1><p>服务端实时快照 · 文件名带时间戳 · 任何人随时可导</p></div></div>
+      <div class="grid2">
+        <div class="card"><h2>全量留痕 annotations.csv</h2>
+          <p class="hint">每一笔标注(含改判/撤销)——审计与一致率分析用。</p>
+          <button class="btn btn-primary" data-exp="annotations.csv">下载留痕表</button></div>
+        <div class="card"><h2>多数票定稿 labels_voted.csv</h2>
+          <p class="hint">每张一行:当前定稿框集;未定稿标 pending。</p>
+          <button class="btn btn-primary" data-exp="labels_voted.csv">下载定稿表</button></div>
+      </div>
+      <div class="card"><h2>VOC XML 包 voc_xml.zip</h2>
+        <p class="hint">只含已定稿图,与测试集 XML 同格式 —— 解压与图片同目录即可喂 <code>wafer.prepare</code> 训练。</p>
+        <button class="btn btn-primary" data-exp="voc_xml.zip">下载 XML 包</button></div>
+      <div class="card" id="sealCard">
+        <h2>封板 <span id="sealPill" class="pill todo">未封板</span></h2>
+        <p class="hint">训练只认封板后的里程碑终版。任意一人发起,4 人中 3 人同意即锁定。</p>
+        <div id="sealWho" class="chips"></div>
+        <div class="toolbar"><button class="btn btn-primary" id="btnSeal">我同意封板</button></div>
+      </div>
+    </section>
+
+    <!-- 帮助视图 -->
+    <section id="view-help" class="hidden">
+      <div class="topbar"><div><h1>帮助与方案</h1><p>先读这里,再开工</p></div>
+        <div class="toolbar"><button class="btn" id="btnTut2">重看新手引导</button></div></div>
+      <div class="card" id="helpFlow"><h2>标注五步</h2><div id="helpFlowBody"></div></div>
+      <div class="card"><h2>协作机制(全组已对齐)</h2><div id="helpCoop"></div></div>
+      <div class="card"><h2>缺陷代码释义 <span class="hint inline">中文名为推断,问号表示待官方确认;依据=框形态统计+拼音线索</span></h2>
+        <div id="helpCodes"></div></div>
+      <div class="card"><h2>参照样例库</h2><div id="helpRefs" class="ref-grid big"></div></div>
+      <div class="card"><h2>常见问题</h2><div id="helpFaq"></div></div>
+    </section>
+  </main>
+</div>
+
+<!-- 新手引导覆盖层 -->
+<div id="tutLayer" class="tut-layer hidden">
+  <div class="tut-card">
+    <div class="tut-step" id="tutStep"></div>
+    <h2 id="tutTitle"></h2>
+    <div id="tutBody"></div>
+    <div class="toolbar">
+      <button class="btn" id="tutPrev">上一步</button>
+      <button class="btn btn-primary" id="tutNext">下一步</button>
+    </div>
+  </div>
+</div>
+
+<!-- 图片放大模态 -->
+<div id="lightbox" class="lightbox hidden"><img id="lightboxImg" alt="" /></div>
+
+<script src="/static/app.js?v=005"></script>
+</body>
+</html>

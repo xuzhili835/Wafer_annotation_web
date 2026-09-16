@@ -1,1 +1,12 @@
-# wafer 标注结果/本地缓存不进 git
+# 数据与运行时(不进 git)
+data/
+labels.db
+labels.db-wal
+labels.db-shm
+tokens.txt
+__pycache__/
+.pytest_cache/
+.venv/
+server.log
+.shots/
+.playwright-cli/
