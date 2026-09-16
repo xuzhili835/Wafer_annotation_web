@@ -9,10 +9,6 @@ concurrency:
   group: ci-cd-${{ github.ref }}
   cancel-in-progress: true
 
-# 三个 Secrets 未配置时自动跳过部署(测试照跑),配好后下一次 push 自动激活
-env:
-  HAS_SSH_SECRETS: ${{ secrets.SSH_HOST != '' && secrets.SSH_USER != '' && secrets.SSH_PRIVATE_KEY != '' }}
-
 jobs:
   test:
     name: 测试(pytest)
@@ -37,20 +33,33 @@ jobs:
   deploy:
     name: 部署到服务器
     needs: test
-    if: env.HAS_SSH_SECRETS == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
+      - name: 检查部署 Secrets 是否已配置
+        id: gate
+        env:
+          HAS_SECRETS: ${{ secrets.SSH_HOST != '' && secrets.SSH_USER != '' && secrets.SSH_PRIVATE_KEY != '' }}
+        run: |
+          echo "ok=$HAS_SECRETS" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_SECRETS" != "true" ]; then
+            echo "⏭ SSH 三 Secrets(SSH_PRIVATE_KEY / SSH_HOST / SSH_USER)未配置,本轮只跑测试不部署。"
+            echo "   配好 Secrets 后任意推送一次即自动部署。"
+          fi
+
       - name: 检出代码
+        if: steps.gate.outputs.ok == 'true'
         uses: actions/checkout@v5
 
       - name: 配置 SSH 私钥
+        if: steps.gate.outputs.ok == 'true'
         uses: webfactory/ssh-agent@v0.9.1
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: 信任服务器指纹
+        if: steps.gate.outputs.ok == 'true'
         run: |
           mkdir -p ~/.ssh
           echo "正在连接 ${{ secrets.SSH_HOST }}:22 ..."
@@ -62,6 +71,7 @@ jobs:
           echo "✓ 服务器指纹已记录"
 
       - name: 同步代码到服务器
+        if: steps.gate.outputs.ok == 'true'
         run: |
           HOST_ARG="${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}"
           ssh $HOST_ARG "mkdir -p /opt/wafer-label/app /opt/wafer-label/data /opt/wafer-label/backup /opt/wafer-label/venv"
@@ -72,11 +82,13 @@ jobs:
           rsync -avz requirements.txt    $HOST_ARG:/opt/wafer-label/app/requirements.txt
 
       - name: 执行部署脚本
+        if: steps.gate.outputs.ok == 'true'
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
             "bash /opt/wafer-label/app/deploy/deploy.sh"
 
       - name: 公网健康检查(3 次重试)
+        if: steps.gate.outputs.ok == 'true'
         run: |
           for i in 1 2 3; do
             sleep 3
