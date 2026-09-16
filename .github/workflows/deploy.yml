@@ -1,4 +1,4 @@
-name: Deploy
+name: CI/CD
 
 on:
   push:
@@ -6,11 +6,38 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: ci-cd-${{ github.ref }}
   cancel-in-progress: true
 
+# 三个 Secrets 未配置时自动跳过部署(测试照跑),配好后下一次 push 自动激活
+env:
+  HAS_SSH_SECRETS: ${{ secrets.SSH_HOST != '' && secrets.SSH_USER != '' && secrets.SSH_PRIVATE_KEY != '' }}
+
 jobs:
+  test:
+    name: 测试(pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: 跑测试
+        run: python -m pytest tests/ -q
+
   deploy:
+    name: 部署到服务器
+    needs: test
+    if: env.HAS_SSH_SECRETS == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -49,9 +76,15 @@ jobs:
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
             "bash /opt/wafer-label/app/deploy/deploy.sh"
 
-      - name: 公网健康检查
+      - name: 公网健康检查(3 次重试)
         run: |
-          sleep 2
-          curl -sSf -m 10 "https://wafer.echeng.xyz/health" -o /dev/null \
-            && echo "✅ https://wafer.echeng.xyz 正常" \
-            || (echo "⚠ 公网访问异常"; exit 1)
+          for i in 1 2 3; do
+            sleep 3
+            if curl -sSf -m 10 "https://wafer.echeng.xyz/health" -o /dev/null; then
+              echo "✅ https://wafer.echeng.xyz 正常"
+              exit 0
+            fi
+            echo "第 $i 次探测失败,重试..."
+          done
+          echo "⚠ 公网访问异常(服务器本机健康检查已通过,多为 DNS/Cloudflare 未就绪)"
+          exit 1

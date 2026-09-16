@@ -205,3 +205,140 @@ def test_validation(client):
     r = client.post("/api/submit", json={"stem": "img_04",
                     "boxes": [B("XX", 1, 1, 9, 9)]}, headers=H("cmx"))
     assert r.status_code == 400, "未知代码应拒绝"
+
+
+# ---------- 回归校准单 2026-09-17(find-bug-skill 独立审查轮追加,全部为已验证行为的回归钉) ----------
+
+def test_health_public(client):
+    r = client.get("/health")
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+
+def test_me_anonymous_returns_null_not_401(client):
+    fresh = TestClient(main_mod.app)
+    r = fresh.get("/api/me")
+    assert r.status_code == 200 and r.json()["name"] is None, "首访 401 会刷浏览器 console error(回归:me 未登录改返 200)"
+
+
+def test_logout_clears_cookie(client):
+    c = TestClient(main_mod.app)
+    assert c.post("/api/login", json={"token": TOKENS["zj"]}).status_code == 200
+    assert c.get("/api/queue").status_code == 200, "登录后 cookie 通道可用"
+    c.post("/api/logout")
+    assert c.get("/api/queue").status_code == 401, "退出后旧 cookie 必须失效(回归:前端退出必须调 /api/logout)"
+
+
+def test_unauthorized_matrix(client):
+    fresh = TestClient(main_mod.app)
+    for p in ("/api/queue", "/api/task/img_00", "/api/review/img_00", "/api/arbitration",
+              "/api/seal", "/api/progress", "/api/export/annotations.csv",
+              "/api/export/labels_voted.csv", "/api/export/voc_xml.zip", "/api/image/img_00"):
+        assert fresh.get(p).status_code == 401, p
+    for p in ("/api/submit", "/api/draft", "/api/vote", "/api/dispute", "/api/seal"):
+        assert fresh.post(p, json={"stem": "img_00"}).status_code == 401, p
+
+
+def test_box_validation_matrix(client):
+    s = "img_05"
+
+    def post(boxes, empty=False):
+        return client.post("/api/submit", json={"stem": s, "boxes": boxes, "is_empty": empty},
+                           headers=H("cmx"))
+
+    assert post([B("XX", 1, 1, 9, 9)]).status_code == 400, "未知代码"
+    assert post([B("X", 1, 1, 2, 9)]).status_code == 400, "宽 1px 过小"
+    assert post([B("X", 60, 10, 10, 40)]).status_code == 200, "倒序坐标应规范化后接受"
+    assert post([B("X", -50, -50, 700, 700)]).status_code == 200, "越界坐标应夹紧到图幅"
+    assert post([], empty=True).status_code == 200
+    assert post([B("X", 10, 10, 20, 20)], empty=True).status_code == 200, "勾选空图时框应被忽略"
+    conn = db_mod.connect()
+    try:
+        row = conn.execute("SELECT boxes_json,is_empty FROM annotations WHERE stem=? ORDER BY id DESC LIMIT 1", (s,)).fetchone()
+    finally:
+        conn.close()
+    assert row["is_empty"] == 1 and json.loads(row["boxes_json"]) == [], "is_empty=true 时框必须丢弃"
+
+
+def test_submit_unknown_stem(client):
+    for bad in ("img_99", "../../etc/passwd"):
+        r = client.post("/api/submit", json={"stem": bad, "boxes": [B("X", 1, 1, 9, 9)]},
+                        headers=H("cmx"))
+        assert r.status_code == 404, bad
+
+
+def test_vote_upsert_same_round(client):
+    stem = "img_04"
+    submit(client, "cmx", stem, [B("KD", 10, 10, 30, 30)])
+    submit(client, "hce", stem, [B("HS", 40, 40, 60, 60)])
+    submit(client, "zj", stem, [B("BX", 1, 1, 20, 20)])
+    rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
+    kd = next(c["id"] for c in rv["candidates"] if c["boxes"][0]["code"] == "KD")
+    hs = next(c["id"] for c in rv["candidates"] if c["boxes"][0]["code"] == "HS")
+    client.post("/api/vote", json={"stem": stem, "chosen_id": kd}, headers=H("cmx"))
+    client.post("/api/vote", json={"stem": stem, "chosen_id": hs}, headers=H("cmx"))  # 同人改票
+    client.post("/api/vote", json={"stem": stem, "chosen_id": kd}, headers=H("hce"))
+    rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
+    assert rv["votes"] == 2 and rv["my_vote"] == hs, "同人同轮重复投票应 upsert(改票生效)而非累计"
+    assert not rv["final"], "2 票不足 3 票"
+    client.post("/api/vote", json={"stem": stem, "chosen_id": kd}, headers=H("zj"))
+    rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
+    assert rv["final"], "3 票 3:0 → 定稿"
+
+
+def test_dispute_new_round_ignores_old_votes(client):
+    stem = "img_04"
+    d = client.post("/api/dispute", json={"stem": stem, "reason": "前一轮投得太快,想再看看"},
+                    headers=H("zzq"))
+    assert d.status_code == 200 and d.json()["round"] == 2
+    rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
+    assert not rv["final"] and rv["round"] == 2
+    kd = next(c["id"] for c in rv["candidates"] if c["boxes"] and c["boxes"][0]["code"] == "KD")
+    client.post("/api/vote", json={"stem": stem, "chosen_id": kd}, headers=H("zzq"))
+    rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
+    assert not rv["final"] and rv["votes"] == 1, "第 2 轮只见新票,第 1 轮 3 票自然作废"
+    client.post("/api/vote", json={"stem": stem, "chosen_id": kd}, headers=H("cmx"))
+    client.post("/api/vote", json={"stem": stem, "chosen_id": kd}, headers=H("hce"))
+    rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
+    assert rv["final"] and rv["round"] == 2, "第 2 轮重新满 3 票 → 定稿"
+
+
+def test_vote_revoked_candidate_404(client):
+    conn = db_mod.connect()
+    try:
+        row = conn.execute("SELECT id,stem FROM annotations WHERE revoked=1 LIMIT 1").fetchone()
+    finally:
+        conn.close()
+    r = client.post("/api/vote", json={"stem": row["stem"], "chosen_id": row["id"]}, headers=H("cmx"))
+    assert r.status_code == 404, "已撤销候选不可再被投"
+
+
+def test_annotations_csv_keeps_revoked_rows(client):
+    conn = db_mod.connect()
+    try:
+        total = conn.execute("SELECT COUNT(*) c FROM annotations").fetchone()["c"]
+        revoked = conn.execute("SELECT COUNT(*) c FROM annotations WHERE revoked=1").fetchone()["c"]
+    finally:
+        conn.close()
+    assert revoked > 0, "前置用例应已产生撤回留痕"
+    text = client.get("/api/export/annotations.csv", headers=H("cmx")).text
+    assert len(text.strip().splitlines()) - 1 == total, "留痕导出必须包含 revoked 行"
+
+
+def test_voc_xml_matches_final_set(client):
+    zr = client.get("/api/export/voc_xml.zip", headers=H("cmx"))
+    zf = zipfile.ZipFile(io.BytesIO(zr.content))
+    xmls = set(zf.namelist())
+    conn = db_mod.connect()
+    try:
+        rows = conn.execute(
+            "SELECT i.stem, a.is_empty FROM images i JOIN annotations a ON a.id=i.final_id"
+            " WHERE i.final_id IS NOT NULL").fetchall()
+    finally:
+        conn.close()
+    assert rows
+    for r in rows:
+        present = (r["stem"] + ".xml") in xmls
+        if r["is_empty"]:
+            assert not present, "空图定稿不得入 XML 包"
+        else:
+            assert present, "非空定稿图必须在 XML 包内"
