@@ -131,6 +131,8 @@ $("nav").addEventListener("click", async (e) => {
     $("view-" + v).classList.toggle("hidden", v !== b.dataset.view));
   if (b.dataset.view === "progress") { loadProgress(); startProgressPolling(); }
   else stopProgressPolling();
+  if (b.dataset.view === "annotate") startTopPolling();
+  else stopTopPolling();
   if (b.dataset.view === "review") loadArb();
   if (b.dataset.view === "export") loadSeal();
 });
@@ -152,6 +154,7 @@ async function bootApp() {
       }
     }).catch(() => {});
   await reloadQueue();
+  startTopPolling();
   if (!localStorage.getItem("wafer_tut_done_v1")) startTut();
 }
 
@@ -374,10 +377,7 @@ function markDirty() {
       .catch(() => {});
   }, 800);
 }
-async function reloadQueue() {
-  const q = (await api("/api/queue")).queue;
-  state.queue = q;
-  state.qi = -1;
+function paintTopbar(q) {
   const todo = q.filter((o) => o.pri <= 3);
   const revise = q.filter((o) => o.pri === 4);
   const done = q.filter((o) => o.pri === 5).length;
@@ -390,6 +390,15 @@ async function reloadQueue() {
     const c = e.target.closest(".chip[data-stem]");
     if (c) loadStem(c.dataset.stem, true);
   };
+}
+async function refreshTopbar() {
+  // 轻量刷新:只更新顶栏数字与回看列表,绝不动当前队列位置/画布(不打断标注)
+  try { paintTopbar((await api("/api/queue")).queue); } catch (e) { /* 网络抖动忽略,下轮再试 */ }
+}
+async function reloadQueue() {
+  state.queue = (await api("/api/queue")).queue;
+  state.qi = -1;
+  paintTopbar(state.queue);
   nextStem();
 }
 $("btnRefreshQ").onclick = reloadQueue;
@@ -463,12 +472,22 @@ $("btnSubmit").onclick = async () => {
     else if (r.conflict) tail = " · 与另一份标注不一致,已进盲审(将加派第三人)";
     else tail = " · 已提交,等其他成员标注后自动比对";
     annMsg("提交成功" + tail, "ok");
+    refreshTopbar();                       // 数字立刻少一张,不用刷新页面
     setTimeout(() => nextStem(), 900);
   } catch (e) { annMsg(e.message); }
 };
 
 /* ---------- 进度 ---------- */
 let _progTimer = null;
+let _topTimer = null;
+function startTopPolling() {
+  stopTopPolling();
+  _topTimer = setInterval(() => {
+    if (document.getElementById("view-annotate").classList.contains("hidden")) { stopTopPolling(); return; }
+    refreshTopbar();
+  }, 30000);
+}
+function stopTopPolling() { if (_topTimer) { clearInterval(_topTimer); _topTimer = null; } }
 function startProgressPolling() {
   stopProgressPolling();
   _progTimer = setInterval(() => {
