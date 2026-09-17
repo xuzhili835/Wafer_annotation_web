@@ -129,7 +129,8 @@ $("nav").addEventListener("click", async (e) => {
   document.querySelectorAll("#nav button").forEach((x) => x.classList.toggle("active", x === b));
   ["annotate", "progress", "review", "export", "help"].forEach((v) =>
     $("view-" + v).classList.toggle("hidden", v !== b.dataset.view));
-  if (b.dataset.view === "progress") loadProgress();
+  if (b.dataset.view === "progress") { loadProgress(); startProgressPolling(); }
+  else stopProgressPolling();
   if (b.dataset.view === "review") loadArb();
   if (b.dataset.view === "export") loadSeal();
 });
@@ -383,7 +384,11 @@ async function reloadQueue() {
 }
 $("btnRefreshQ").onclick = reloadQueue;
 $("btnSkip").onclick = () => nextStem(true);
+$("btnPrev").onclick = () => stepQueue(-1);
 function nextStem(skipCurrent) {
+  stepQueue(skipCurrent ? 2 : 1);
+}
+function stepQueue(delta) {
   const todo = state.queue.filter((o) => o.pri <= 3);
   if (!todo.length) {
     state.stem = null;
@@ -392,8 +397,7 @@ function nextStem(skipCurrent) {
     ctx.clearRect(0, 0, 640, 640);
     return;
   }
-  state.qi = (state.qi + 1) % todo.length;
-  if (skipCurrent && todo.length > 1) state.qi = (state.qi + 1) % todo.length;
+  state.qi = ((state.qi + delta) % todo.length + todo.length) % todo.length;
   loadStem(todo[state.qi].stem, false);
 }
 async function loadStem(stem, revise) {
@@ -454,6 +458,15 @@ $("btnSubmit").onclick = async () => {
 };
 
 /* ---------- 进度 ---------- */
+let _progTimer = null;
+function startProgressPolling() {
+  stopProgressPolling();
+  _progTimer = setInterval(() => {
+    if (document.getElementById("view-progress").classList.contains("hidden")) { stopProgressPolling(); return; }
+    loadProgress();
+  }, 30000);
+}
+function stopProgressPolling() { if (_progTimer) { clearInterval(_progTimer); _progTimer = null; } }
 async function loadProgress() {
   const d = await api("/api/progress");
   const c = { pending: 0, wip: 0, ready: 0, conflict: 0, final: 0 };
