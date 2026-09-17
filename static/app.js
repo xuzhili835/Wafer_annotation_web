@@ -194,8 +194,18 @@ function renderRefs(code) {
   const box = $("refBox");
   const list = (state.refs && state.refs[code]) || [];
   if (!list.length) { box.innerHTML = '<p class="hint">该类暂无参照样例</p>'; return; }
-  box.innerHTML = "";
-  list.slice(0, 4).forEach((r) => {
+  state.refPage = state.refPage || {};
+  state.refPage[code] = state.refPage[code] || 0;
+  const per = 4, pages = Math.ceil(list.length / per), page = Math.min(state.refPage[code], pages - 1);
+  state.refPage[code] = page;
+  const nav = pages > 1
+    ? '<div class="toolbar" style="margin-bottom:6px"><button class="btn" id="refPrev">‹</button>'
+      + '<span class="hint inline">第 ' + (page + 1) + " / " + pages + " 页 · 共 " + list.length + " 张</span>"
+      + '<button class="btn" id="refNext">›</button></div>'
+    : "";
+  box.innerHTML = nav + '<div id="refPageBox"></div>';
+  const holder = $("refPageBox");
+  list.slice(page * per, page * per + per).forEach((r) => {
     const item = document.createElement("div");
     item.className = "ref-item";
     const cv = document.createElement("canvas");
@@ -214,8 +224,12 @@ function renderRefs(code) {
     const cap = document.createElement("div");
     cap.className = "cap"; cap.textContent = r.stem;
     item.appendChild(cap);
-    box.appendChild(item);
+    holder.appendChild(item);
   });
+  if (pages > 1) {
+    $("refPrev").onclick = () => { state.refPage[code] = (page - 1 + pages) % pages; renderRefs(code); };
+    $("refNext").onclick = () => { state.refPage[code] = (page + 1) % pages; renderRefs(code); };
+  }
 }
 
 /* ---------- 画布引擎 ---------- */
@@ -546,6 +560,7 @@ async function loadProgress() {
 $("btnLoadArb").onclick = loadArb;
 async function loadArb() {
   const d = await api("/api/arbitration");
+  const f = await api("/api/arbitration?scope=final");
   $("arbCount").textContent = d.list.length;
   $("arbList").innerHTML = d.list.length
     ? d.list.map((o) => '<div class="arb-item" data-stem="' + esc(o.stem) + '"><code>' + esc(o.stem)
@@ -554,6 +569,15 @@ async function loadArb() {
   $("arbList").onclick = (e) => {
     const it = e.target.closest(".arb-item[data-stem]");
     if (it) openReview(it.dataset.stem);
+  };
+  $("finCount").textContent = f.list.length;
+  $("finList").innerHTML = f.list.length
+    ? f.list.map((o) => '<div class="arb-item" data-fstem="' + esc(o.stem) + '"><code>' + esc(o.stem)
+        + "</code><span>已定稿" + (o.round > 1 ? " · 第 " + o.round + " 轮" : "") + " · 查看/异议 →</span></div>").join("")
+    : '<p class="hint">还没有定稿的图</p>';
+  $("finList").onclick = (e) => {
+    const it = e.target.closest(".arb-item[data-fstem]");
+    if (it) openReview(it.dataset.fstem);
   };
 }
 async function openReview(stem) {
@@ -736,7 +760,7 @@ function renderHelp() {
   const refs = $("helpRefs");
   refs.innerHTML = "";
   m.codes.forEach((c) => {
-    ((state.refs || {})[c] || []).slice(0, 2).forEach((r) => {
+    ((state.refs || {})[c] || []).slice(0, 8).forEach((r) => {
       const item = document.createElement("div");
       item.className = "ref-item";
       const cvh = document.createElement("canvas");

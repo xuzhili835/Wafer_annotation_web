@@ -124,6 +124,15 @@ def test_two_agree_auto_final(client):
     assert r.get("final_id")
 
 
+def test_arbitration_final_scope(client):
+    """scope=final 返回已定稿列表(异议入口);默认待决列表不含已定稿。"""
+    r = client.get("/api/arbitration?scope=final", headers=H("hce"))
+    lst = r.json()["list"]
+    assert "img_00" in [o["stem"] for o in lst] and all("round" in o for o in lst)
+    r2 = client.get("/api/arbitration", headers=H("hce"))
+    assert "img_00" not in [o["stem"] for o in r2.json()["list"]]
+
+
 def test_conflict_then_third_majority(client):
     submit(client, "cmx", "img_01", [B("BX", 5, 5, 40, 40)])
     r = submit(client, "hce", "img_01", [B("X", 5, 5, 40, 40)])  # 不同码 → 分歧

@@ -350,9 +350,10 @@ def _ref_data() -> dict:
     _REF_CACHE = {}
     for code, items in by_code.items():
         items.sort(key=lambda r: (-r["n"], r["stem"]))
+        # 返回全部形态(前端分页展示):每类只给 3 张会让很多形态看不到
         _REF_CACHE[code] = [{"stem": r["stem"], "boxes": r["boxes"],
                              "url": f"/api/ref_image/{r['dir']}/{r['stem']}.png"}
-                            for r in items[:3]]
+                            for r in items]
     return _REF_CACHE
 
 
@@ -607,13 +608,20 @@ def dispute(body: DisputeBody, user: str = Depends(current_user)):
 
 
 @app.get("/api/arbitration")
-def arbitration(user: str = Depends(current_user)):
-    """全库待决列表:conflict(分歧未决)与有异议重开的图。"""
+def arbitration(scope: str = "open", user: str = Depends(current_user)):
+    """scope=open(默认):待决列表(分歧未决/异议重开);scope=final:已定稿列表(异议入口)。"""
     conn = connect()
     try:
         rows = conn.execute("SELECT stem, final_id FROM images ORDER BY stem").fetchall()
         out = []
         for r in rows:
+            if scope == "final":
+                if not r["final_id"]:
+                    continue
+                rnd = conn.execute("SELECT COALESCE(MAX(round),1) r FROM votes WHERE stem=?",
+                                   (r["stem"],)).fetchone()["r"]
+                out.append({"stem": r["stem"], "round": rnd})
+                continue
             if r["final_id"]:
                 continue
             cands = _candidates(conn, r["stem"])
