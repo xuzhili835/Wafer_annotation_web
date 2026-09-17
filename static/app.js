@@ -605,6 +605,13 @@ function chipRow(filters, cur, attr, cnt) {
     '<button class="chip2' + (cur === k ? " on" : "") + '" data-' + attr + '="' + k + '">'
     + label + " " + cnt[k] + "</button>").join("") + "</div>";
 }
+function markActiveArbItem() {
+  // 当前面板正在看的图,在左侧列表(待决/已定稿)里点亮;列表每次重渲染后也要调一次,
+  // 否则投票后 loadArb 重建列表会把高亮冲掉(data-fstem 是已定稿条目,别漏)
+  const cur = state.rvStem;
+  document.querySelectorAll(".arb-item").forEach((x) =>
+    x.classList.toggle("active", !!cur && (x.dataset.stem === cur || x.dataset.fstem === cur)));
+}
 function renderArbList() {
   // 匿名期只按「待我表态 / 已表态」两个视角切换,不标谁标的哪份;排序沿服务端(投票中优先)
   const cur = state.arbFilter || "todo";
@@ -628,6 +635,7 @@ function renderArbList() {
     const it = e.target.closest(".arb-item[data-stem]");
     if (it) openReview(it.dataset.stem);
   };
+  markActiveArbItem();
 }
 function renderFinList() {
   const cur = state.finFilter || "mine";
@@ -641,9 +649,11 @@ function renderFinList() {
   if (cur === "mine") list = all.filter((o) => o.ann || o.vote);
   else if (cur === "rej") list = all.filter((o) => o.ann && !o.ann_final);
   const VIA = { vote: "投票定稿", majority: "多数一致", unanimous: "全一致" };
-  const VIA_TIP = { vote: "≥3 票人工裁决,建议优先复查",
-    majority: "第三人补标与一方一致,事实多数自动定稿(没走投票)",
-    unanimous: "所有标注一致,自动定稿,置信最高" };
+  const VIA_NOTE = {
+    vote: "三人各有说法,全组盲投,票多且过半者定 · 建议优先复查",
+    majority: "第三人补标后与前两份之一相同,凑成多数直接定稿,没走投票",
+    unanimous: "两份(或全部)标注完全相同,系统直接定稿,最省心",
+  };
   // 每条最多两个标签:关系(我的✓/✗)+ 定稿方式;完整解释悬停可见
   const finItem = (o) => {
     const rel = o.ann_final ? '<b class="tag-ok" title="定稿采纳了我的标注">我的✓</b>'
@@ -651,7 +661,7 @@ function renderFinList() {
     const round = o.round > 1 ? " · 第" + o.round + "轮" : "";
     return '<div class="arb-item" data-fstem="' + esc(o.stem) + '"><code>' + esc(o.stem) + "</code>"
       + '<span class="fin-tags">' + rel
-      + '<b class="' + (o.via === "vote" ? "tag-warn" : "tag-ok") + '" title="' + VIA_TIP[o.via] + '">'
+      + '<b class="' + (o.via === "vote" ? "tag-warn" : "tag-ok") + '" title="' + VIA_NOTE[o.via] + '">'
       + (VIA[o.via] || o.via) + "</b>" + round + "</span></div>";
   };
   const fv = { vote: list.filter((o) => o.via === "vote"),
@@ -659,7 +669,8 @@ function renderFinList() {
                unanimous: list.filter((o) => o.via === "unanimous") };
   const body = list.length
     ? (["vote", "majority", "unanimous"].filter((k) => fv[k].length).map((k) =>
-        '<div class="arb-group" title="' + VIA_TIP[k] + '">' + VIA[k] + "(" + fv[k].length + ")</div>"
+        '<div class="arb-group"><span>' + VIA[k] + "(" + fv[k].length + ')</span>'
+        + '<span class="grp-note">' + VIA_NOTE[k] + "</span></div>"
         + fv[k].map(finItem).join("")).join(""))
     : '<p class="hint">' + (cur === "all" ? "还没有定稿的图" : "这个筛选下没有图,点「全部」看全部定稿。") + "</p>";
   $("finList").innerHTML = all.length
@@ -671,6 +682,7 @@ function renderFinList() {
     const it = e.target.closest(".arb-item[data-fstem]");
     if (it) openReview(it.dataset.fstem);
   };
+  markActiveArbItem();
 }
 function switchArbTab(t) {
   state.arbTab = t;
@@ -780,8 +792,7 @@ async function renderRvComments(stem) {
 }
 async function openReview(stem) {
   state.rvStem = stem;
-  document.querySelectorAll(".arb-item").forEach((x) =>
-    x.classList.toggle("active", x.dataset.stem === stem));
+  markActiveArbItem();
   const d = await api("/api/review/" + stem);
   const viaTxt = d.via === "vote" ? "投票定稿"
     : d.via === "unanimous" ? "全一致定稿" : "多数一致定稿";
