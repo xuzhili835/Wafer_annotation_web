@@ -213,6 +213,31 @@ def try_settle(conn, stem: str) -> dict:
     return {"final_id": final_id}
 
 
+def _settle_via(conn, stem: str, final_id: int, rnd: int) -> str:
+    """已定稿图的定稿方式(已定稿列表按置信分组复查用)。按 try_settle 同优先级事后推断:
+    unanimous=现存候选全一致(含双标一致,置信最高);majority=事实多数(如第三人补标 2/3
+    一致,没走投票);vote=≥3 票人工裁决(最需复查)。弃权票(-1)不计。"""
+    cands = _candidates(conn, stem)
+    if cands and all(boxes_match(cands[0], c) for c in cands[1:]):
+        return "unanimous"
+    groups: list[list] = []
+    for c in cands:
+        for g in groups:
+            if boxes_match(g[0], c):
+                g.append(c)
+                break
+        else:
+            groups.append([c])
+    fg = next((g for g in groups if any(m["id"] == final_id for m in g)), [])
+    if len(fg) > len(cands) / 2:
+        return "majority"
+    active = {c["id"] for c in cands}
+    rows = conn.execute("SELECT chosen_id FROM votes WHERE stem=? AND round=?",
+                        (stem, rnd)).fetchall()
+    nv = sum(1 for v in rows if v["chosen_id"] in active)
+    return "vote" if nv >= 3 else "majority"
+
+
 # ---------------- 队列与任务 ----------------
 @app.get("/api/queue")
 def queue(user: str = Depends(current_user)):
@@ -537,7 +562,9 @@ def review(stem: str, user: str = Depends(current_user)):
             "SELECT reviewer, chosen_id FROM votes WHERE stem=? AND round=?", (stem, round_no)).fetchall()
         votes = [v for v in all_votes if v["chosen_id"] in active_ids]  # 悬空票不计入票数
         tally = Counter(v["chosen_id"] for v in votes)
-        my_vote = next((v["chosen_id"] for v in votes if v["reviewer"] == user), None)
+        # 弃权(chosen_id=-1):只留痕"看过这张图",不计入定稿票数;可改投覆盖
+        abstains = sum(1 for v in all_votes if v["chosen_id"] == -1)
+        my_vote = next((v["chosen_id"] for v in all_votes if v["reviewer"] == user), None)
         disputes = conn.execute(
             "SELECT raised_by, reason, created_at FROM disputes WHERE stem=? ORDER BY id DESC",
             (stem,)).fetchall()
@@ -549,7 +576,7 @@ def review(stem: str, user: str = Depends(current_user)):
         } for c in cands]
         return {"stem": stem, "final": bool(img["final_id"]), "revealed": revealed,
                 "candidates": out_cands, "tally": dict(tally), "votes": len(votes),
-                "my_vote": my_vote, "round": round_no,
+                "abstains": abstains, "my_vote": my_vote, "round": round_no,
                 "disputes": [dict(d) for d in disputes]}
     finally:
         conn.close()
@@ -564,10 +591,11 @@ class VoteBody(BaseModel):
 def vote(body: VoteBody, user: str = Depends(current_user)):
     conn = connect()
     try:
-        c = conn.execute("SELECT id FROM annotations WHERE id=? AND stem=? AND revoked=0",
-                         (body.chosen_id, body.stem)).fetchone()
-        if not c:
-            raise HTTPException(404, "候选不存在")
+        if body.chosen_id != -1:  # -1 = 弃权:看过但拿不准,只留痕不计票,定稿引擎不计入
+            c = conn.execute("SELECT id FROM annotations WHERE id=? AND stem=? AND revoked=0",
+                             (body.chosen_id, body.stem)).fetchone()
+            if not c:
+                raise HTTPException(404, "候选不存在")
         round_no = current_round(conn, body.stem)
         conn.execute(
             "INSERT INTO votes(stem,reviewer,chosen_id,round) VALUES(?,?,?,?)"
@@ -620,13 +648,18 @@ def arbitration(scope: str = "open", user: str = Depends(current_user)):
                     continue
                 rnd = conn.execute("SELECT COALESCE(MAX(round),1) r FROM votes WHERE stem=?",
                                    (r["stem"],)).fetchone()["r"]
-                out.append({"stem": r["stem"], "round": rnd})
+                out.append({"stem": r["stem"], "round": rnd,
+                            "via": _settle_via(conn, r["stem"], r["final_id"], rnd)})
                 continue
             if r["final_id"]:
                 continue
             cands = _candidates(conn, r["stem"])
             if len(cands) >= 2 and any(not boxes_match(cands[0], c) for c in cands[1:]):
-                out.append({"stem": r["stem"], "cands": len(cands)})
+                myv = conn.execute(
+                    "SELECT chosen_id FROM votes WHERE stem=? AND reviewer=? AND round=?",
+                    (r["stem"], user, current_round(conn, r["stem"]))).fetchone()
+                out.append({"stem": r["stem"], "cands": len(cands),
+                            "my": myv["chosen_id"] if myv else None})
         # 投票中(≥3 份)排最前:离定稿最近,优先清
         out.sort(key=lambda o: (-o.get("cands", 0), o["stem"]))
         return {"list": out}

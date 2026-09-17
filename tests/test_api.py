@@ -32,7 +32,7 @@ main_mod.DATA_DIR = cfg.DATA_DIR
 TOKENS = {m: f"{m}_testtoken" for m in cfg.MEMBERS}
 
 
-def _make_data(tmp_path, n=6, size=64):
+def _make_data(tmp_path, n=9, size=64):
     from PIL import Image
     data = tmp_path / "data"
     train = data / "训练集"
@@ -100,12 +100,12 @@ def test_login_and_meta(client):
 
 def test_assignment(client):
     r = client.get("/api/queue", headers=H("hce")).json()["queue"]
-    assert len(r) == 6
+    assert len(r) == 9
     # 每张图恰好 2 个不同分配人
     conn = db_mod.connect()
     try:
         rows = conn.execute("SELECT assignee_a, assignee_b FROM images").fetchall()
-        assert len(rows) == 6
+        assert len(rows) == 9
         for row in rows:
             assert row["assignee_a"] != row["assignee_b"]
         counts = {m: 0 for m in TOKENS}
@@ -246,7 +246,7 @@ def test_reference_prod(client):
     # 测试集绝不进标注库(仍 6 张)
     conn = db_mod.connect()
     try:
-        assert conn.execute("SELECT COUNT(*) c FROM images").fetchone()["c"] == 6
+        assert conn.execute("SELECT COUNT(*) c FROM images").fetchone()["c"] == 9
     finally:
         conn.close()
 
@@ -560,3 +560,49 @@ def test_comments(client):
     client.cookies.clear()
     assert client.get("/api/comments").status_code == 401
     assert client.post("/api/comments", json={"stem": "img_00", "text": "x"}).status_code == 401
+
+
+# ---------- 弃权 + 列表分类(2026-09-16 队友需求) ----------
+
+def test_abstain_vote(client):
+    """弃权(chosen_id=-1):只留痕不计票;凑不出定稿也不阻塞他人;
+    review/arbitration 可见;改投可覆盖弃权。"""
+    stem = "img_06"
+    submit(client, "cmx", stem, [B("HB", 10, 10, 40, 40)])
+    r = submit(client, "hce", stem, [B("X", 10, 10, 40, 40)])
+    assert r.get("conflict")
+    # 弃权:被接受、不产生定稿
+    r = client.post("/api/vote", json={"stem": stem, "chosen_id": -1}, headers=H("zj"))
+    assert r.status_code == 200 and not r.json().get("final_id")
+    rv = client.get("/api/review/" + stem, headers=H("zj")).json()
+    assert rv["abstains"] == 1 and rv["my_vote"] == -1 and rv["votes"] == 0
+    # 待决列表:zj 视角 my=-1(已表态),他人视角 my=None(待表态)
+    arb = client.get("/api/arbitration", headers=H("zj")).json()["list"]
+    assert next(x for x in arb if x["stem"] == stem)["my"] == -1
+    arb2 = client.get("/api/arbitration", headers=H("cmx")).json()["list"]
+    assert next(x for x in arb2 if x["stem"] == stem)["my"] is None
+    # 弃权后补 3 实票:2:1 → 定稿(弃权不阻塞),abstains 保持留痕
+    rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
+    hb = next(c["id"] for c in rv["candidates"] if c["boxes"][0]["code"] == "HB")
+    for who in ("cmx", "hce", "zzq"):
+        client.post("/api/vote", json={"stem": stem, "chosen_id": hb}, headers=H(who))
+    rv = client.get("/api/review/" + stem, headers=H("zj")).json()
+    assert rv["final"] and rv["abstains"] == 1, "3 实票定稿,弃权仅留痕"
+    fin = client.get("/api/arbitration?scope=final", headers=H("zj")).json()["list"]
+    assert next(x for x in fin if x["stem"] == stem)["via"] == "vote"
+
+
+def test_settle_via_unanimous_and_majority(client):
+    """已定稿列表 via 分类:双标一致=unanimous;分歧后第三人补标 2/3=majority(没走投票)。"""
+    submit(client, "cmx", "img_07", [B("BYW", 10, 10, 40, 40)])
+    submit(client, "hce", "img_07", [B("BYW", 11, 10, 40, 40)])   # IoU 高 → 一致定稿
+    fin = client.get("/api/arbitration?scope=final", headers=H("cmx")).json()["list"]
+    assert next(x for x in fin if x["stem"] == "img_07")["via"] == "unanimous"
+    # 分歧 → 第三人与 cmx 一致 → 事实多数(2/3)定稿,无投票 → majority
+    submit(client, "cmx", "img_08", [B("DQK", 10, 10, 50, 50)])
+    r = submit(client, "hce", "img_08", [B("XQK", 10, 10, 50, 50)])
+    assert r.get("conflict")
+    r = submit(client, "zj", "img_08", [B("DQK", 12, 11, 50, 50)])
+    assert r.get("final_id")
+    fin = client.get("/api/arbitration?scope=final", headers=H("cmx")).json()["list"]
+    assert next(x for x in fin if x["stem"] == "img_08")["via"] == "majority"

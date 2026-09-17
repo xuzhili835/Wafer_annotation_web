@@ -574,18 +574,34 @@ async function loadArb() {
   const d = await api("/api/arbitration");
   const f = await api("/api/arbitration?scope=final");
   $("arbCount").textContent = d.list.length;
+  const arbItem = (o) => '<div class="arb-item" data-stem="' + esc(o.stem) + '"><code>' + esc(o.stem)
+    + "</code><span>" + (o.my != null
+      ? (o.my === -1 ? '<b class="tag-warn">已弃权</b> · ' : '<b class="tag-ok">已投</b> · ')
+      : "")
+    + (o.cands >= 3 ? o.cands + " 份标注 · 投票中 →" : "2 份分歧 · 待第三人 →") + "</span></div>";
+  const un = d.list.filter((o) => o.my == null);
+  const done = d.list.filter((o) => o.my != null);
   $("arbList").innerHTML = d.list.length
-    ? d.list.map((o) => '<div class="arb-item" data-stem="' + esc(o.stem) + '"><code>' + esc(o.stem)
-        + "</code><span>" + (o.cands >= 3 ? o.cands + " 份标注 · 投票中 →" : "2 份分歧 · 待第三人 →") + "</span></div>").join("")
+    ? (un.length ? '<div class="arb-group">待你表态(' + un.length + ')</div>' + un.map(arbItem).join("") : "")
+      + (done.length ? '<div class="arb-group">你已表态(改投/弃权可覆盖,讨论后随时改)</div>' + done.map(arbItem).join("") : "")
     : '<p class="hint">没有分歧待决的图,稳!</p>';
   $("arbList").onclick = (e) => {
     const it = e.target.closest(".arb-item[data-stem]");
     if (it) openReview(it.dataset.stem);
   };
   $("finCount").textContent = f.list.length;
+  const VIA = { vote: "投票定稿", majority: "多数一致定稿", unanimous: "全部一致定稿" };
+  const finItem = (o) => '<div class="arb-item" data-fstem="' + esc(o.stem) + '"><code>' + esc(o.stem)
+    + "</code><span><b class=\"" + (o.via === "vote" ? "tag-warn" : "tag-ok") + "\">" + (VIA[o.via] || o.via)
+    + "</b>" + (o.round > 1 ? " · 第 " + o.round + " 轮" : "") + " · 查看/异议 →</span></div>";
+  const fv = { vote: f.list.filter((o) => o.via === "vote"),
+               majority: f.list.filter((o) => o.via === "majority"),
+               unanimous: f.list.filter((o) => o.via === "unanimous") };
   $("finList").innerHTML = f.list.length
-    ? f.list.map((o) => '<div class="arb-item" data-fstem="' + esc(o.stem) + '"><code>' + esc(o.stem)
-        + "</code><span>已定稿" + (o.round > 1 ? " · 第 " + o.round + " 轮" : "") + " · 查看/异议 →</span></div>").join("")
+    ? (["vote", "majority", "unanimous"].filter((k) => fv[k].length).map((k) =>
+        '<div class="arb-group">' + VIA[k] + "(" + fv[k].length + ")"
+        + (k === "vote" ? " · 人工裁决,优先复查" : k === "majority" ? " · 事实多数,没走投票" : " · 置信最高") + "</div>"
+        + fv[k].map(finItem).join("")).join(""))
     : '<p class="hint">还没有定稿的图</p>';
   $("finList").onclick = (e) => {
     const it = e.target.closest(".arb-item[data-fstem]");
@@ -680,7 +696,8 @@ async function openReview(stem) {
   const d = await api("/api/review/" + stem);
   $("rvTitle").innerHTML = "盲审面板 · <code>" + esc(stem) + "</code> " +
     (d.final ? '<span class="pill ok">已定稿</span>' : '<span class="pill wip">未定稿 · 匿名中</span>') +
-    ' <span class="hint inline">第 ' + d.round + " 轮 · 已收 " + d.votes + " 票</span>";
+    ' <span class="hint inline">第 ' + d.round + " 轮 · 已收 " + d.votes + " 票"
+    + (d.abstains ? " · " + d.abstains + " 人弃权" : "") + "</span>";
   const rc = $("rv"), g = rc.getContext("2d");
   g.clearRect(0, 0, 640, 640);
   g.fillStyle = "#0b1220"; g.fillRect(0, 0, 640, 640);
@@ -740,8 +757,12 @@ async function openReview(stem) {
         const fixBtn = '<div class="toolbar" style="margin:0 0 8px"><button class="btn" id="btnFixHere">'
           + "三份都不全/都不对?去标注页<b>自己画一份正确的</b> →</button>"
           + '<span class="hint inline">提交后自动成为新候选参与判定;已定稿的图会自动重开盲审</span></div>';
-        return focusBar + fixBtn + reasonHtml + cards
-          + (d.final ? "" : '<p class="hint small">投票规则:<b>全员 4 人都能投,包括已标注的人</b>(匿名状态下凭判断选对的一份,坚持己见也是票);≥3 票且<b>严格过半</b>才定稿 —— 2 个人定不了任何图;<b>平票不自动定稿</b>:群里讨论后,再点另一份「投这份」即可覆盖你原来的票;定稿后仍可「我有异议」重开。</p>');
+        const abstainBtn = d.final ? "" : '<div class="toolbar" style="margin:0 0 8px"><button class="btn" id="btnAbstain"'
+          + (d.my_vote === -1 ? " disabled" : "") + ">"
+          + (d.my_vote === -1 ? "已弃权 · 想改就点上面任意「投这份」覆盖" : "两份都拿不准?<b>弃权</b>(只记录我看过了,不计票、不算进定稿)")
+          + "</button></div>";
+        return focusBar + fixBtn + reasonHtml + cards + abstainBtn
+          + (d.final ? "" : '<p class="hint small">投票规则:<b>全员 4 人都能投,包括已标注的人</b>(匿名状态下凭判断选对的一份,坚持己见也是票);≥3 票且<b>严格过半</b>才定稿 —— 2 个人定不了任何图;<b>平票不自动定稿</b>:群里讨论后,再点另一份「投这份」即可覆盖你原来的票;<b>弃权只留痕不计票</b>,让组里知道这张图有人看过但没把握;定稿后仍可「我有异议」重开。</p>');
       })()
     : '<p class="hint">这张图还没有任何有效标注</p>';
   $("rvCands").onclick = async (e) => {
@@ -760,20 +781,24 @@ async function openReview(stem) {
       return;
     }
     const b = e.target.closest("[data-vote]");
-    if (!b) return;
+    const ab = e.target.closest("#btnAbstain");
+    if (!b && !ab) return;
     try {
-      await api("/api/vote", { json: { stem, chosen_id: parseInt(b.dataset.vote, 10) } });
+      await api("/api/vote", { json: { stem, chosen_id: ab ? -1 : parseInt(b.dataset.vote, 10) } });
       await loadArb();                                   // 左侧列表与计数即时刷新
-      const rem = (state.arbOpen || []).map((o) => o.stem);
+      const rem = (state.arbOpen || []).filter((o) => o.my == null).map((o) => o.stem);
       if (!rem.includes(stem)) {
         if (rem.length) {
-          openReview(rem[0]);                            // 这张已定稿 → 自动跳下一张(投票中优先)
+          openReview(rem[0]);                            // 这张已定稿/已表态 → 自动跳下一张未表态
         } else {
           state.rvStem = null;
           $("rvTitle").textContent = "盲审面板";
           const g = $("rv").getContext("2d");
           g.clearRect(0, 0, 640, 640); g.fillStyle = "#0b1220"; g.fillRect(0, 0, 640, 640);
-          $("rvCands").innerHTML = '<p class="hint">全部待决已清空,干得漂亮!</p>';
+          const left = (state.arbOpen || []).length;
+          $("rvCands").innerHTML = '<p class="hint">'
+            + (left ? "你的待表态已清零。剩下的都是你已投/已弃权的图,左侧下方可随时改票。"
+                    : "全部待决已清空,干得漂亮!") + "</p>";
           $("rvComments").innerHTML = "";
           $("rvDisputes").innerHTML = "";
         }
@@ -915,6 +940,7 @@ function renderHelp() {
     '<div class="faq-item"><b>两人标的框差几个像素算分歧吗?</b> 不算。框数相同、同码框位置重叠足够大(IoU≥0.6)即视为一致,自动定稿。</div>' +
     '<div class="faq-item"><b>几个缺陷挤在一起,大框里面画不了小框?</b> 按住 <kbd>Alt</kbd>(或 <kbd>Shift</kbd>)再拖拽,会无视已有框、直接新建;建议先小后大或配合该快捷键。松开前拖出画布也没关系,坐标会自动收敛到图内。</div>' +
     '<div class="faq-item"><b>平票怎么办?</b> 平票不自动定稿——数据准确性优先。群里讨论后,在盲审面板再点另一份「投这份」即可改票(覆盖原票),≥3 票且严格过半即定稿;对已定稿结果不满,随时「我有异议」重开。</div>' +
+    '<div class="faq-item"><b>两份都不确定,不想乱投怎么办?</b> 点「弃权」。弃权只记录「我看过这张图但拿不准」,<b>不计入票数、不算进定稿</b>,也不会把你从待办里踢掉;之后想通了随时改投覆盖。列表里你已投/已弃权的图会归到「已表态」分组,不会每次刷新都自己找。</div>' +
     '<div class="faq-item"><b>令牌失效?</b> 浏览器保存 7 天,过期回登录页重贴一次即可;令牌本身永久有效。</div>' +
     '<div class="faq-item"><b>图加载慢?</b> 每张 640px 灰度 png 仅几十 KB;若网络抖动,点「刷新队列」重进。</div>';
 }
@@ -926,7 +952,7 @@ const TUT = [
   { t: "画框", b: "在缺陷上<b>按住鼠标拖拽</b>即画一个框。<ul><li>点框选中,拖动可移位</li><li>拖四角白点可缩放</li><li>右键点框 / 选中按 <kbd>Delete</kbd> 删除</li><li><kbd>Ctrl+Z</kbd> 撤销</li></ul>" },
   { t: "选类别", b: "右侧 12 个类别按钮,<b>快捷键见角标</b>(<kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>)。<ul><li>先选类再画框;选中已有框后按类别键可改它的类</li><li>悬停按钮有判定要点</li><li>整图无缺陷:勾选「本图无缺陷」或按 <kbd>N</kbd>,很重要,别硬找框!</li></ul>" },
   { t: "提交与改判", b: "画完点「提交本图」或按 <kbd>Enter</kbd>,<b>每画一笔自动存草稿</b>,崩了不怕。<ul><li>提交后图进盲审流程</li><li>「回看改判」可重新提交自己标过的未定稿图</li></ul>" },
-  { t: "分歧怎么办", b: "两人不一致 → 自动加派第三人盲审 → 僵局全员投票、严格过半定稿;平票不自动定稿,群里协商改票。<b>定稿前所有人都匿名(甲乙丙丁)</b>,放平心态,你的判断有价值。有异议随时重审,无理由才不受理。" },
+  { t: "分歧怎么办", b: "两人不一致 → 自动加派第三人盲审 → 僵局全员投票、严格过半定稿;平票不自动定稿,群里协商改票;两份都拿不准可以<b>弃权</b>(只留痕「我看过了」,不计票、不算进定稿,之后可改投覆盖)。<b>定稿前所有人都匿名(甲乙丙丁)</b>,放平心态,你的判断有价值。有异议随时重审,无理由才不受理。" },
   { t: "开始吧!", b: "队列已按你的分配洗好牌,直接开标。规则细节在「帮助与方案」页随时可查。<br><br><b>记住:如实标,不猜目录,不看别人。</b>" },
 ];
 let tutIdx = 0;
