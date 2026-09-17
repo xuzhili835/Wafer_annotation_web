@@ -300,6 +300,93 @@ def image(stem: str, user: str = Depends(current_user)):
         conn.close()
 
 
+# ---------------- 产线参照样例(测试集,只读:不写库、不进队列) ----------------
+_REF_CACHE: dict | None = None
+
+
+def _ref_root():
+    return DATA_DIR / "测试集"
+
+
+def _ref_data() -> dict:
+    """解析测试集 VOC XML → {code: [{stem, url, boxes}]}(进程内缓存)。
+    每个子目录名 = 产线保证该图含该类缺陷;每类取该类框数最多的前 3 张。"""
+    global _REF_CACHE
+    if _REF_CACHE is not None:
+        return _REF_CACHE
+    import re
+    import xml.etree.ElementTree as ET
+    root = _ref_root()
+    per_dir: dict[str, list] = {}
+    if root.is_dir():
+        for code_dir in sorted(root.iterdir()):
+            if not code_dir.is_dir() or not re.fullmatch(r"[A-Z0-9]{1,8}", code_dir.name):
+                continue
+            for xf in sorted(code_dir.glob("*.xml")):
+                try:
+                    rt = ET.parse(xf).getroot()
+                except Exception:
+                    continue
+                boxes = []
+                for obj in rt.findall("object"):
+                    name = (obj.findtext("name") or "").strip()
+                    bb = obj.find("bndbox")
+                    if name not in CODES or bb is None:
+                        continue
+                    try:
+                        boxes.append({"code": name,
+                                      "x0": int(float(bb.findtext("xmin", 0))),
+                                      "y0": int(float(bb.findtext("ymin", 0))),
+                                      "x1": int(float(bb.findtext("xmax", 0))),
+                                      "y1": int(float(bb.findtext("ymax", 0)))})
+                    except (TypeError, ValueError):
+                        continue
+                if boxes:
+                    per_dir.setdefault(code_dir.name, []).append({
+                        "stem": xf.stem, "dir": code_dir.name,
+                        "n": sum(1 for b in boxes if b["code"] == code_dir.name),
+                        "boxes": boxes})
+    _REF_CACHE = {}
+    for code, items in per_dir.items():
+        items.sort(key=lambda r: (-r["n"], r["stem"]))
+        _REF_CACHE[code] = [{"stem": r["stem"], "boxes": r["boxes"],
+                             "url": f"/api/ref_image/{r['dir']}/{r['stem']}.png"}
+                            for r in items[:3]]
+    return _REF_CACHE
+
+
+@app.get("/api/reference_prod")
+def reference_prod(user: str = Depends(current_user)):
+    return {"codes": _ref_data()}
+
+
+@app.get("/api/ref_image/{code}/{fname}")
+def ref_image(code: str, fname: str, user: str = Depends(current_user)):
+    import re
+    if not re.fullmatch(r"[A-Z0-9]{1,8}", code) or not re.fullmatch(r"[A-Za-z0-9._-]+", fname):
+        raise HTTPException(404, "没有这张图")
+    root = _ref_root()
+    src = root / code / fname
+    try:
+        src.resolve().relative_to(root.resolve())
+    except ValueError:
+        raise HTTPException(404, "没有这张图")
+    if not src.is_file():
+        raise HTTPException(404, "没有这张图")
+    webp = DATA_DIR / ".webp_cache" / f"ref_{code}_{src.stem}.webp"
+    headers = {"Cache-Control": "private, max-age=86400"}
+    if webp.exists():
+        return FileResponse(webp, media_type="image/webp", headers=headers)
+    try:
+        from PIL import Image
+        webp.parent.mkdir(parents=True, exist_ok=True)
+        with Image.open(src) as im:
+            im.save(webp, "WEBP", quality=85)
+        return FileResponse(webp, media_type="image/webp", headers=headers)
+    except Exception:
+        return FileResponse(src, media_type="image/png", headers=headers)
+
+
 @app.get("/api/task/{stem}")
 def task(stem: str, user: str = Depends(current_user)):
     conn = connect()

@@ -38,6 +38,16 @@ def _make_data(tmp_path, n=6, size=64):
     data.mkdir(parents=True, exist_ok=True)
     for i in range(n):
         Image.new("L", (size, size), color=i * 30 % 255).save(data / f"img_{i:02d}.png")
+    # 产线参照样例(测试集,只读):绝不进 images 表
+    for code in ("X", "HB"):
+        d = data / "测试集" / code
+        d.mkdir(parents=True)
+        Image.new("L", (size, size), 99).save(d / f"ref_{code}.png")
+        (d / f"ref_{code}.xml").write_text(
+            f'<annotation><size><width>{size}</width><height>{size}</height></size>'
+            f'<object><name>{code}</name><bndbox><xmin>1</xmin><ymin>2</ymin>'
+            f'<xmax>20</xmax><ymax>21</ymax></bndbox></object></annotation>',
+            encoding="utf-8")
     return data
 
 
@@ -196,6 +206,30 @@ def test_seal_and_exports(client):
     b = objs[0].find("bndbox")
     assert all(b.find(k) is not None for k in ("xmin", "ymin", "xmax", "ymax"))
     assert zr.headers.get("X-Final-Count", "0").isdigit()
+
+
+def test_reference_prod(client):
+    r = client.get("/api/reference_prod", headers=H("hce"))
+    assert r.status_code == 200
+    codes = r.json()["codes"]
+    assert set(codes) == {"X", "HB"}
+    x = codes["X"][0]
+    assert x["boxes"][0]["code"] == "X" and x["url"].startswith("/api/ref_image/X/")
+    img = client.get(x["url"], headers=H("hce"))
+    assert img.status_code == 200 and img.headers["content-type"].startswith("image/")
+    # 路径穿越 / 非法目录名一律 404
+    assert client.get("/api/ref_image/X/%2e%2e%2fx.png", headers=H("hce")).status_code == 404
+    assert client.get("/api/ref_image/XX/no.png", headers=H("hce")).status_code == 404
+    # 未授权拒绝(先清前面用例留下的登录 cookie,模拟无凭据访问)
+    client.cookies.clear()
+    assert client.get("/api/reference_prod").status_code == 401
+    assert client.get(x["url"]).status_code == 401
+    # 测试集绝不进标注库(仍 6 张)
+    conn = db_mod.connect()
+    try:
+        assert conn.execute("SELECT COUNT(*) c FROM images").fetchone()["c"] == 6
+    finally:
+        conn.close()
 
 
 def test_validation(client):

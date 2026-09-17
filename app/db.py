@@ -109,7 +109,11 @@ def _ensure_images(conn: sqlite3.Connection) -> None:
         return
     if not DATA_DIR.exists():
         return
-    files = sorted(p for p in DATA_DIR.rglob("*") if p.suffix.lower() in IMG_EXTS)
+    # 「测试集」目录是产线参照样例(只读),绝不入标注库、绝不进队列;
+    # 不排除的话,将来库一旦重建,537 张测试图会被当训练图分配出去
+    files = sorted(p for p in DATA_DIR.rglob("*")
+                   if p.suffix.lower() in IMG_EXTS
+                   and "测试集" not in p.relative_to(DATA_DIR).parts)
     if not files:
         return
     from PIL import Image

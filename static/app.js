@@ -141,6 +141,16 @@ async function bootApp() {
   renderCodeBtns();
   renderHelp();
   try { state.refs = await (await fetch("/static/ref/reference.json")).json(); } catch (e) { state.refs = {}; }
+  // 产线实测参照样例(测试集真框)异步替换示意样例;拉不到就维持兜底,不阻塞启动
+  fetch("/api/reference_prod", { headers: { "X-Token": localStorage.getItem("wafer_token") || "" } })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((j) => {
+      if (j && j.codes && Object.keys(j.codes).length) {
+        state.refs = j.codes;
+        renderRefs(state.activeCode);
+        renderHelp();
+      }
+    }).catch(() => {});
   await reloadQueue();
   if (!localStorage.getItem("wafer_tut_done_v1")) startTut();
 }
@@ -187,7 +197,7 @@ function renderRefs(code) {
       g.drawImage(img, 0, 0);
       (r.boxes || []).forEach((b) => drawRect(g, b, state.meta.colors[b.code] || "#fff", 3));
     };
-    img.src = "/static/" + r.img;
+    img.src = r.url || ("/static/" + r.img);
     cv.onclick = () => bigLightbox(img.src, r.boxes || []);
     item.appendChild(cv);
     const cap = document.createElement("div");
@@ -642,7 +652,7 @@ function renderHelp() {
         g.drawImage(img, 0, 0);
         (r.boxes || []).forEach((b) => drawRect(g, b, m.colors[b.code] || "#fff", 3));
       };
-      img.src = "/static/" + r.img;
+      img.src = r.url || ("/static/" + r.img);
       cvh.onclick = () => bigLightbox(img.src, r.boxes || []);
       item.appendChild(cvh);
       const cap = document.createElement("div");
