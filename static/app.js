@@ -509,7 +509,15 @@ $("btnSubmit").onclick = async () => {
     else tail = " · 已提交,等其他成员标注后自动比对";
     annMsg("提交成功" + tail, "ok");
     refreshTopbar();                       // 数字立刻少一张,不用刷新页面
-    setTimeout(() => nextStem(), 900);
+    if (state.reviseMode) {
+      // 审阅修订:提交后回到盲审面板看判定结果
+      setTimeout(() => {
+        document.querySelector('#nav button[data-view="review"]').click();
+        openReview(state.stem);
+      }, 900);
+    } else {
+      setTimeout(() => nextStem(), 900);
+    }
   } catch (e) { annMsg(e.message); }
 };
 
@@ -729,11 +737,19 @@ async function openReview(stem) {
           + d.candidates.map((c, i) => '<button class="btn" data-focus="' + i + '">'
             + '<b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">' + esc(c.anon) + "</b></button>").join("")
           + '<span class="hint inline">点某人只看他的框,标签不再互相遮挡</span></div>';
-        return focusBar + reasonHtml + cards
+        const fixBtn = '<div class="toolbar" style="margin:0 0 8px"><button class="btn" id="btnFixHere">'
+          + "三份都不全/都不对?去标注页<b>自己画一份正确的</b> →</button>"
+          + '<span class="hint inline">提交后自动成为新候选参与判定;已定稿的图会自动重开盲审</span></div>';
+        return focusBar + fixBtn + reasonHtml + cards
           + (d.final ? "" : '<p class="hint small">投票规则:<b>全员 4 人都能投,包括已标注的人</b>(匿名状态下凭判断选对的一份,坚持己见也是票);≥3 票且<b>严格过半</b>才定稿 —— 2 个人定不了任何图;<b>平票不自动定稿</b>:群里讨论后,再点另一份「投这份」即可覆盖你原来的票;定稿后仍可「我有异议」重开。</p>');
       })()
     : '<p class="hint">这张图还没有任何有效标注</p>';
   $("rvCands").onclick = async (e) => {
+    if (e.target.closest("#btnFixHere")) {
+      document.querySelector('#nav button[data-view="annotate"]').click();
+      setTimeout(() => loadStem(stem, true), 50);
+      return;
+    }
     const f = e.target.closest("[data-focus]");
     if (f) {
       state.rvFocus = parseInt(f.dataset.focus, 10);
