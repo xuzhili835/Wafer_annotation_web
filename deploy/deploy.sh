@@ -31,8 +31,16 @@ if [ -f "$DB" ]; then
     "$VENV_DIR/bin/python" - "$DB" "$BACKUP_DIR/labels.$TS.db" <<'PY'
 import sqlite3, sys
 src, dst = sys.argv[1], sys.argv[2]
-sqlite3.connect(dst).backup(sqlite3.connect(src))
-print("ok")
+# 方向铁律:backup(target) = "把自己复制给 target" → 源必须是线上库
+# (2026-09-17 曾写反,导致每次部署把空备份覆写进线上库、清空全部标注)
+s = sqlite3.connect(src)
+d = sqlite3.connect(dst)
+s.backup(d)
+n_img = d.execute("SELECT COUNT(*) FROM images").fetchone()[0]
+n_ann = d.execute("SELECT COUNT(*) FROM annotations").fetchone()[0]
+print(f"backup ok: images={n_img} annotations={n_ann}")
+if n_img < 1:
+    raise SystemExit("备份校验失败:images 为空,拒绝继续部署")
 PY
     log "✓ 已备份到 $BACKUP_DIR/labels.$TS.db"
 else
