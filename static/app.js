@@ -583,6 +583,7 @@ async function loadArb() {
     const it = e.target.closest(".arb-item[data-fstem]");
     if (it) openReview(it.dataset.fstem);
   };
+  state.arbOpen = d.list;
   const c = await api("/api/comments?limit=20");
   $("discCount").textContent = c.list.length + (c.list.length >= 20 ? "+" : "");
   $("discFeed").innerHTML = c.list.length
@@ -746,7 +747,23 @@ async function openReview(stem) {
     if (!b) return;
     try {
       await api("/api/vote", { json: { stem, chosen_id: parseInt(b.dataset.vote, 10) } });
-      openReview(stem);
+      await loadArb();                                   // 左侧列表与计数即时刷新
+      const rem = (state.arbOpen || []).map((o) => o.stem);
+      if (!rem.includes(stem)) {
+        if (rem.length) {
+          openReview(rem[0]);                            // 这张已定稿 → 自动跳下一张(投票中优先)
+        } else {
+          state.rvStem = null;
+          $("rvTitle").textContent = "盲审面板";
+          const g = $("rv").getContext("2d");
+          g.clearRect(0, 0, 640, 640); g.fillStyle = "#0b1220"; g.fillRect(0, 0, 640, 640);
+          $("rvCands").innerHTML = '<p class="hint">全部待决已清空,干得漂亮!</p>';
+          $("rvComments").innerHTML = "";
+          $("rvDisputes").innerHTML = "";
+        }
+      } else {
+        openReview(stem);                                // 平票未决 → 留在本图看最新票数
+      }
     } catch (err) { rvMsg(err.message); }
   };
   if (state.cmtTimer) { clearInterval(state.cmtTimer); state.cmtTimer = null; }

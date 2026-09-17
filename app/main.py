@@ -627,6 +627,8 @@ def arbitration(scope: str = "open", user: str = Depends(current_user)):
             cands = _candidates(conn, r["stem"])
             if len(cands) >= 2 and any(not boxes_match(cands[0], c) for c in cands[1:]):
                 out.append({"stem": r["stem"], "cands": len(cands)})
+        # 投票中(≥3 份)排最前:离定稿最近,优先清
+        out.sort(key=lambda o: (-o.get("cands", 0), o["stem"]))
         return {"list": out}
     finally:
         conn.close()
