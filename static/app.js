@@ -397,17 +397,29 @@ function nextStem(skipCurrent) {
   loadStem(todo[state.qi].stem, false);
 }
 async function loadStem(stem, revise) {
+  const seq = (state.loadSeq = (state.loadSeq || 0) + 1);   // 加载序号:连点/慢网时只认最新一次
   state.stem = stem; state.reviseMode = !!revise;
   state.sel = -1; state.undoStack = []; state.loadedDraft = false;
-  $("cvStem").textContent = stem + (revise ? " · 回看改判" : "");
+  $("cvStem").textContent = stem + " · 图片加载中…" + (revise ? " · 回看改判" : "");
   const t = await api("/api/task/" + stem);
+  if (seq !== state.loadSeq) return;                        // 已切到别的图,本次作废
   state.imgW = t.w; state.imgH = t.h;
   state.isEmpty = false; $("ckEmpty").checked = false;
   state.boxes = [];
   state.img = null;
+  render();
   const img = new Image();
-  img.onload = () => { state.img = img; render(); };
-  img.src = "/api/image/" + stem + "?t=" + Date.now();
+  img.onload = () => {
+    if (seq !== state.loadSeq) return;                      // 迟到的旧图不许覆盖新图
+    state.img = img;
+    $("cvStem").textContent = stem + (revise ? " · 回看改判" : "");
+    render();
+  };
+  img.onerror = () => {
+    if (seq !== state.loadSeq) return;
+    $("cvStem").textContent = stem + " · 图片加载失败,点「跳过」或刷新重试";
+  };
+  img.src = "/api/image/" + stem;
   if (t.my_latest) {
     state.boxes = JSON.parse(JSON.stringify(JSON.parse(t.my_latest.boxes_json)));
     state.isEmpty = !!t.my_latest.is_empty;
@@ -495,8 +507,12 @@ async function openReview(stem) {
   g.clearRect(0, 0, 640, 640);
   g.fillStyle = "#0b1220"; g.fillRect(0, 0, 640, 640);
   const img = new Image();
-  img.onload = () => { g.drawImage(img, 0, 0, 640, 640); paintCands(g, d); };
-  img.src = "/api/image/" + stem + "?t=" + Date.now();
+  img.onload = () => {
+    if (state.rvStem !== stem) return;                      // 面板已切到别的图
+    g.drawImage(img, 0, 0, 640, 640); paintCands(g, d);
+  };
+  state.rvStem = stem;
+  img.src = "/api/image/" + stem;
   $("rvCands").innerHTML = d.candidates.length
     ? d.candidates.map((c, i) => {
         const color = CAND_COLORS[i % CAND_COLORS.length];

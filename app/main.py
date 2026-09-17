@@ -279,7 +279,9 @@ def image(stem: str, user: str = Depends(current_user)):
         row = conn.execute("SELECT path FROM images WHERE stem=?", (stem,)).fetchone()
         if not row:
             raise HTTPException(404, "没有这张图")
-        return FileResponse(DATA_DIR / row["path"], media_type="image/png")
+        # 图片永不变化:允许浏览器与 Cloudflare 边缘长期缓存(四人标注,同图后三者秒开)
+        return FileResponse(DATA_DIR / row["path"], media_type="image/png",
+                            headers={"Cache-Control": "public, max-age=31536000, immutable"})
     finally:
         conn.close()
 
