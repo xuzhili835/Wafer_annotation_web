@@ -615,6 +615,20 @@ function switchArbTab(t) {
 $("tabOpen").onclick = () => switchArbTab("open");
 $("tabFin").onclick = () => switchArbTab("fin");
 $("tabDisc").onclick = () => switchArbTab("disc");
+function startCommentStream() {
+  // SSE 实时:任何人发新评论,服务端 2 秒内推信号 → 立即重载当前面板讨论与讨论流。
+  // 断线由 EventSource 自动重连;15s 轮询继续作兜底,两者叠加无害(渲染幂等)。
+  if (state.es) return;
+  try {
+    const es = new EventSource("/api/comments/stream");
+    es.onmessage = () => {
+      renderRvComments(state.rvStem);
+      if (state.arbTab === "disc") loadArb();
+    };
+    es.onerror = () => { /* 自动重连中 */ };
+    state.es = es;
+  } catch (e) { /* 无 EventSource 的环境由 15s 轮询兜底 */ }
+}
 async function renderRvComments(stem) {
   const box = $("rvComments");
   try {
@@ -732,6 +746,7 @@ async function openReview(stem) {
     } catch (err) { rvMsg(err.message); }
   };
   if (state.cmtTimer) { clearInterval(state.cmtTimer); state.cmtTimer = null; }
+  startCommentStream();
   renderRvComments(stem);
   state.cmtTimer = setInterval(() => {
     if (document.getElementById("view-review").classList.contains("hidden")) {

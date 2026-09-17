@@ -696,6 +696,36 @@ def add_comment(body: CommentBody, user: str = Depends(current_user)):
         conn.close()
 
 
+@app.get("/api/comments/stream")
+async def comments_stream(user: str = Depends(current_user)):
+    """SSE 实时推送:有新评论时 2 秒内通知所有在线客户端(凭 cookie 鉴权)。
+    X-Accel-Buffering:no 绕过 nginx 响应缓冲;周期 ping 防 CF/nginx 空闲断连。"""
+    from asyncio import sleep
+    from starlette.concurrency import run_in_threadpool
+
+    def latest():
+        conn = connect()
+        try:
+            r = conn.execute("SELECT COALESCE(MAX(id),0) m FROM comments").fetchone()
+            return r["m"]
+        finally:
+            conn.close()
+
+    async def gen():
+        last = await run_in_threadpool(latest)
+        yield "retry: 5000\n\n"
+        while True:
+            m = await run_in_threadpool(latest)
+            if m != last:
+                last = m
+                yield f"data: {json.dumps({'latest': m})}\n\n"
+            yield ": ping\n\n"
+            await sleep(2)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"X-Accel-Buffering": "no", "Cache-Control": "no-cache"})
+
+
 # ---------------- 进度与导出 ----------------
 @app.get("/api/progress")
 def progress(user: str = Depends(current_user)):
