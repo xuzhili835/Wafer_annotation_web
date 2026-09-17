@@ -801,9 +801,12 @@ def progress(user: str = Depends(current_user)):
 @app.get("/api/export/annotations.csv")
 def exp_annotations(user: str = Depends(current_user)):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # csv/zip 在 CF 默认边缘缓存扩展名名单里:必须显式 no-store,
+    # 否则导出会被边缘/浏览器缓存,下载到旧数据(2026-09-17 实测发生)
     return PlainTextResponse(
         export.export_annotations_csv(), media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename=annotations_{stamp}.csv"})
+        headers={"Content-Disposition": f"attachment; filename=annotations_{stamp}.csv",
+                 "Cache-Control": "private, no-store"})
 
 
 @app.get("/api/export/labels_voted.csv")
@@ -811,7 +814,8 @@ def exp_labels(user: str = Depends(current_user)):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return PlainTextResponse(
         export.export_labels_voted_csv(), media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename=labels_voted_{stamp}.csv"})
+        headers={"Content-Disposition": f"attachment; filename=labels_voted_{stamp}.csv",
+                 "Cache-Control": "private, no-store"})
 
 
 @app.get("/api/export/voc_xml.zip")
@@ -821,7 +825,7 @@ def exp_voc(user: str = Depends(current_user)):
     return Response(
         content=data, media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename=voc_xml_{stamp}.zip",
-                 "X-Final-Count": str(count)})
+                 "X-Final-Count": str(count), "Cache-Control": "private, no-store"})
 
 
 # ---------------- 静态前端 ----------------

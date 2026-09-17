@@ -209,6 +209,12 @@ def test_seal_and_exports(client):
     voted = client.get("/api/export/labels_voted.csv", headers=H("cmx")).text
     assert "img_00" in voted and "final" in voted
 
+    # 导出响应必须 no-store:csv/zip 在 CF 默认边缘缓存名单里,不显式禁缓存会下载到旧数据
+    for path in ("/api/export/annotations.csv", "/api/export/labels_voted.csv",
+                 "/api/export/voc_xml.zip"):
+        r = client.get(path, headers=H("cmx"))
+        assert r.headers.get("cache-control") == "private, no-store", path
+
     zr = client.get("/api/export/voc_xml.zip", headers=H("cmx"))
     zf = zipfile.ZipFile(io.BytesIO(zr.content))
     names = [n for n in zf.namelist() if n.endswith(".xml")]
