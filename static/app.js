@@ -861,7 +861,8 @@ function redrawRv() {
 /* ---------- 导出与封板 ---------- */
 document.querySelectorAll("[data-exp]").forEach((b) => {
   b.onclick = async () => {
-    const r = await api("/api/export/" + b.dataset.exp);
+    // 时间戳参数:CF 缓存键含查询串,换 URL 必回源——绕开已缓存的旧副本(头部 no-store 只管未来)
+    const r = await api("/api/export/" + b.dataset.exp + "?_=" + Date.now());
     const blob = await r.blob();
     const cd = r.headers.get("Content-Disposition") || "";
     const name = (cd.match(/filename=([^;]+)/) || [])[1] || b.dataset.exp;
