@@ -591,6 +591,12 @@ async function loadArb() {
     if (it) openReview(it.dataset.cstem);
   };
   switchArbTab(state.arbTab || "open");
+  if (state.discTimer) { clearInterval(state.discTimer); state.discTimer = null; }
+  state.discTimer = setInterval(() => {
+    if (document.getElementById("view-review").classList.contains("hidden")
+        || state.arbTab !== "disc") { clearInterval(state.discTimer); state.discTimer = null; return; }
+    loadArb();
+  }, 20000);
 }
 function switchArbTab(t) {
   state.arbTab = t;
@@ -622,9 +628,17 @@ async function renderRvComments(stem) {
         : '<p class="hint">还没有讨论,有疑问就说两句。</p>') + "</div>"
       + '<div class="toolbar" style="margin-top:6px"><input id="cmtText" maxlength="500" style="flex:1;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px" placeholder="对这张图说点什么…(1~500 字)">'
       + '<button class="btn btn-primary" id="cmtSend">发送</button></div>';
+    const draft = state.cmtDraft && state.cmtDraft[stem];
+    if (draft) $("cmtText").value = draft;
+    $("cmtText").oninput = () => {
+      state.cmtDraft = state.cmtDraft || {};
+      state.cmtDraft[stem] = $("cmtText").value;
+    };
     $("cmtSend").onclick = async () => {
       const t = $("cmtText").value.trim();
       if (!t) return;
+      state.cmtDraft = state.cmtDraft || {};
+      delete state.cmtDraft[stem];
       try {
         await api("/api/comments", { json: { stem, text: t } });
         renderRvComments(stem);
@@ -717,7 +731,16 @@ async function openReview(stem) {
       openReview(stem);
     } catch (err) { rvMsg(err.message); }
   };
+  if (state.cmtTimer) { clearInterval(state.cmtTimer); state.cmtTimer = null; }
   renderRvComments(stem);
+  state.cmtTimer = setInterval(() => {
+    if (document.getElementById("view-review").classList.contains("hidden")) {
+      clearInterval(state.cmtTimer); state.cmtTimer = null; return;
+    }
+    const el = document.getElementById("cmtText");
+    if (el && document.activeElement === el) return;        // 正在打字,不打扰
+    renderRvComments(state.rvStem);
+  }, 15000);
   $("rvDisputes").innerHTML = d.final
     ? '<div class="toolbar"><button class="btn" id="btnDispute">我有异议(重开盲审)</button></div>'
       + (d.disputes.length ? '<p class="hint small">历史异议:' + d.disputes.map((x) =>
