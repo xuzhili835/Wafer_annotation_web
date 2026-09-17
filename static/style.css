@@ -227,3 +227,6 @@ ul.rv-rules li{margin:4px 0}
 /* 已定稿分组头:标题 + 右侧白话解释 */
 .arb-group{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .grp-note{font-weight:400;letter-spacing:0;font-size:10.5px;color:var(--muted)}
+
+/* 样例库图片:保持方形,不按 640px 属性高度撑开 */
+#helpRefs canvas{height:auto;aspect-ratio:1/1}

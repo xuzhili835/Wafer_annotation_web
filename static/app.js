@@ -1036,8 +1036,8 @@ function renderHelp() {
   const allOpen = !!state.refLibAll;
   refs.insertAdjacentHTML("beforeend",
     '<div class="reflib-global"><button class="btn btn-sm" id="refAllToggle">'
-    + (allOpen ? "全部收起" : "全部展开") + "</button>"
-    + '<span class="hint inline">默认每类展示 2 张;可单类「展开」,也可一键全展开</span></div>');
+    + (allOpen ? "全部收起" : "全部展开(页面会变长,慎点)") + "</button>"
+    + '<span class="hint inline">默认全部折叠;想看哪类点哪类的「展开」,图片较大按需看</span></div>');
   m.codes.forEach((c) => {
     const samples = (state.refs || {})[c] || [];
     if (!samples.length) return;
@@ -1046,31 +1046,33 @@ function renderHelp() {
     sec.className = "reflib-sec";
     sec.insertAdjacentHTML("beforeend", "<div class='reflib-head'><b>" + esc(c + " " + (m.names[c] || ""))
       + '</b><span class="hint inline">' + samples.length + " 张</span>"
-      + '<button class="btn btn-sm" data-refmore="' + esc(c) + '">' + (open ? "收起" : "展开 " + samples.length + " 张") + "</button></div>");
-    const grid = document.createElement("div");
-    grid.className = "ref-grid big";
-    (open ? samples : samples.slice(0, 2)).forEach((r) => {
-      const item = document.createElement("div");
-      item.className = "ref-item";
-      const cvh = document.createElement("canvas");
-      cvh.width = 640; cvh.height = 640;
-      cvh.style.cssText = "width:100%;display:block;border-radius:6px;cursor:zoom-in";
-      const img = new Image();
-      img.onload = () => {
-        const g = cvh.getContext("2d");
-        g.drawImage(img, 0, 0);
-        (r.boxes || []).forEach((b) => drawRect(g, b, m.colors[b.code] || "#fff", 3));
-      };
-      img.src = r.url || ("/static/" + r.img);
-      cvh.onclick = () => bigLightbox(img.src, r.boxes || []);
-      item.appendChild(cvh);
-      item.insertAdjacentHTML("beforeend", refLegendHtml(r.boxes));
-      const cap = document.createElement("div");
-      cap.className = "cap"; cap.textContent = c + " · " + r.stem;
-      item.appendChild(cap);
-      grid.appendChild(item);
-    });
-    sec.appendChild(grid);
+      + '<button class="btn btn-sm" data-refmore="' + esc(c) + '">' + (open ? "收起" : "展开") + "</button></div>");
+    if (open) {
+      const grid = document.createElement("div");
+      grid.className = "ref-grid big";
+      samples.forEach((r) => {
+        const item = document.createElement("div");
+        item.className = "ref-item";
+        const cvh = document.createElement("canvas");
+        cvh.width = 640; cvh.height = 640;
+        cvh.style.cssText = "width:100%;display:block;border-radius:6px;cursor:zoom-in";
+        const img = new Image();
+        img.onload = () => {
+          const g = cvh.getContext("2d");
+          g.drawImage(img, 0, 0);
+          (r.boxes || []).forEach((b) => drawRect(g, b, m.colors[b.code] || "#fff", 3));
+        };
+        img.src = r.url || ("/static/" + r.img);
+        cvh.onclick = () => bigLightbox(img.src, r.boxes || []);
+        item.appendChild(cvh);
+        item.insertAdjacentHTML("beforeend", refLegendHtml(r.boxes));
+        const cap = document.createElement("div");
+        cap.className = "cap"; cap.textContent = c + " · " + r.stem;
+        item.appendChild(cap);
+        grid.appendChild(item);
+      });
+      sec.appendChild(grid);
+    }
     refs.appendChild(sec);
   });
   refs.onclick = (e) => {
