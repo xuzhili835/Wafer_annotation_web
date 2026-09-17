@@ -274,17 +274,28 @@ def queue(user: str = Depends(current_user)):
 
 @app.get("/api/image/{stem}")
 def image(stem: str, user: str = Depends(current_user)):
-    # URL 允许带 .png 后缀(前端如此拼)——CF 默认只缓存带静态扩展名的资源
-    if stem.endswith(".png"):
-        stem = stem[:-4]
+    # URL 允许带 .png/.webp 后缀(前端如此拼,纯为了浏览器把响应当图片预渲染)
+    stem = stem.removesuffix(".png").removesuffix(".webp")
     conn = connect()
     try:
         row = conn.execute("SELECT path FROM images WHERE stem=?", (stem,)).fetchone()
         if not row:
             raise HTTPException(404, "没有这张图")
-        # 图片永不变化:允许浏览器与 Cloudflare 边缘长期缓存(四人标注,同图后三者秒开)
-        return FileResponse(DATA_DIR / row["path"], media_type="image/png",
-                            headers={"Cache-Control": "public, max-age=31536000, immutable"})
+        src = DATA_DIR / row["path"]
+        # 640px 灰度原图约 400KB;转 WebP(q85)约 40KB,公网加载快一个量级。
+        # 转换结果落盘复用;private 缓存:浏览器可用,CF 边缘绝不缓存(图片接口带鉴权,防穿透)
+        webp = DATA_DIR / ".webp_cache" / f"{stem}.webp"
+        headers = {"Cache-Control": "private, max-age=86400"}
+        if webp.exists():
+            return FileResponse(webp, media_type="image/webp", headers=headers)
+        try:
+            from PIL import Image
+            webp.parent.mkdir(parents=True, exist_ok=True)
+            with Image.open(src) as im:
+                im.save(webp, "WEBP", quality=85)
+            return FileResponse(webp, media_type="image/webp", headers=headers)
+        except Exception:
+            return FileResponse(src, media_type="image/png", headers=headers)
     finally:
         conn.close()
 
