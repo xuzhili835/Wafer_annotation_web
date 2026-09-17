@@ -110,11 +110,13 @@
         <div class="toolbar"><button class="btn" id="btnLoadArb">刷新仲裁池</button></div></div>
       <div class="review-grid">
         <div class="card">
-          <h2>待决列表 <span id="arbCount" class="pill todo">0</span></h2>
+          <div class="toolbar" style="margin-bottom:8px">
+            <button class="btn btn-primary" id="tabOpen">待决列表 <span id="arbCount" class="pill todo">0</span></button>
+            <button class="btn" id="tabFin">已定稿 · 异议 <span id="finCount" class="pill ok">0</span></button>
+          </div>
+          <p class="hint small" id="arbTabHint">分歧图盲审投票;对定稿结果有异议就切到「已定稿」,点开一键重开盲审。</p>
           <div id="arbList" class="arb-list"><p class="hint">加载中…</p></div>
-          <h2 style="margin-top:14px">已定稿 · 异议入口 <span id="finCount" class="pill ok">0</span></h2>
-          <p class="hint small">对定稿结果有异议?点开任意一张,面板里一键「我有异议」重开盲审。</p>
-          <div id="finList" class="arb-list"><p class="hint">加载中…</p></div>
+          <div id="finList" class="arb-list hidden"><p class="hint">加载中…</p></div>
         </div>
         <div class="card">
           <h2 id="rvTitle">盲审面板</h2>
@@ -180,6 +182,6 @@
 <!-- 图片放大模态 -->
 <div id="lightbox" class="lightbox hidden"><img id="lightboxImg" alt="" /></div>
 
-<script src="/static/app.js?v=018"></script>
+<script src="/static/app.js?v=019"></script>
 </body>
 </html>

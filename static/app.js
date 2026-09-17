@@ -579,7 +579,21 @@ async function loadArb() {
     const it = e.target.closest(".arb-item[data-fstem]");
     if (it) openReview(it.dataset.fstem);
   };
+  switchArbTab(state.arbTab || "open");
 }
+function switchArbTab(t) {
+  state.arbTab = t;
+  const open = t === "open";
+  $("arbList").classList.toggle("hidden", !open);
+  $("finList").classList.toggle("hidden", open);
+  $("tabOpen").classList.toggle("btn-primary", open);
+  $("tabFin").classList.toggle("btn-primary", !open);
+  $("arbTabHint").textContent = open
+    ? "分歧图盲审投票;对定稿结果有异议就切到「已定稿」,点开一键重开盲审。"
+    : "已定稿的图:点开查看定稿结果与真名;有异议点面板里「我有异议」一键重开盲审。";
+}
+$("tabOpen").onclick = () => switchArbTab("open");
+$("tabFin").onclick = () => switchArbTab("fin");
 async function openReview(stem) {
   state.rvStem = stem;
   document.querySelectorAll(".arb-item").forEach((x) =>
