@@ -618,7 +618,7 @@ def arbitration(user: str = Depends(current_user)):
                 continue
             cands = _candidates(conn, r["stem"])
             if len(cands) >= 2 and any(not boxes_match(cands[0], c) for c in cands[1:]):
-                out.append(r["stem"])
+                out.append({"stem": r["stem"], "cands": len(cands)})
         return {"list": out}
     finally:
         conn.close()

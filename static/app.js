@@ -530,7 +530,8 @@ async function loadArb() {
   const d = await api("/api/arbitration");
   $("arbCount").textContent = d.list.length;
   $("arbList").innerHTML = d.list.length
-    ? d.list.map((s) => '<div class="arb-item" data-stem="' + esc(s) + '"><code>' + esc(s) + "</code><span>盲审 →</span></div>").join("")
+    ? d.list.map((o) => '<div class="arb-item" data-stem="' + esc(o.stem) + '"><code>' + esc(o.stem)
+        + "</code><span>" + (o.cands >= 3 ? o.cands + " 份标注 · 投票中 →" : "2 份分歧 · 待第三人 →") + "</span></div>").join("")
     : '<p class="hint">没有分歧待决的图,稳!</p>';
   $("arbList").onclick = (e) => {
     const it = e.target.closest(".arb-item[data-stem]");
@@ -556,19 +557,47 @@ async function openReview(stem) {
   state.rvStem = stem;
   img.src = "/api/image/" + stem + ".webp";
   $("rvCands").innerHTML = d.candidates.length
-    ? d.candidates.map((c, i) => {
-        const color = CAND_COLORS[i % CAND_COLORS.length];
-        const isMine = c.annotator === state.me;
-        return '<div class="cand-card' + (isMine ? " mine" : "") + (d.final && d.tally[c.id] ? " chosen" : "") + '">'
-          + '<div class="row"><span class="anon" style="color:' + color + '">' + esc(c.anon)
-          + (isMine ? "(你)" : "") + "</span><span>" + (c.is_empty ? "本图无缺陷" : c.boxes.length + " 框")
-          + "</span><b>" + (d.tally[c.id] || 0) + " 票</b></div>"
-          + '<div class="row"><span class="meta">' + esc(c.submitted_at)
-          + (c.annotator ? " · 真名:" + esc(c.annotator) : "") + "</span>"
-          + (d.final ? "" : '<button class="btn" data-vote="' + c.id + '"' +
-              (d.my_vote === c.id ? " disabled" : "") + ">" + (d.my_vote === c.id ? "已投" : "投这份") + "</button>")
-          + "</div></div>";
-      }).join("") + (d.final ? "" : '<p class="hint small">盲审规则:定稿前匿名;≥3 票且多数即定稿;平票兜底取最早提交的一份。</p>')
+    ? (() => {
+        const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
+        const boxSummary = (c) => c.is_empty ? "本图无缺陷" :
+          Object.entries(c.boxes.reduce((m, b) => (m[b.code] = (m[b.code] || 0) + 1, m), {}))
+            .map(([k, n]) => CN(k) + "×" + n).join(" · ");
+        // 进池原因:对比最初两份(候选按提交先后排),框数/类型/位置三类说明
+        let reasonHtml = "";
+        if (!d.final) {
+          const a = d.candidates[0], b = d.candidates[1];
+          let why;
+          if (a.is_empty || b.is_empty) why = "一方认为「本图无缺陷」,另一方画了框";
+          else if (a.boxes.length !== b.boxes.length)
+            why = "框数不同(" + a.boxes.length + " 框 vs " + b.boxes.length + " 框)";
+          else {
+            const sig = (c) => c.boxes.map((x) => x.code).sort().join(",");
+            why = sig(a) === sig(b)
+              ? "缺陷类型相同,但框的位置/大小差异过大(同码框重叠度不足 60%)"
+              : "缺陷类型不同(" + boxSummary(a) + " vs " + boxSummary(b) + ")";
+          }
+          const stage = d.candidates.length === 2
+            ? "现在:系统<b>已自动把这张图加派给第三人盲标</b>(第三人提交自己的标注,不是投票);他与任一方一致即直接定稿,无需投票。若等不及,也可在下方提前投。"
+            : "现在:第三人已补标,但<b>仍凑不出过半数一致</b>(三人各有说法)→ 进入全员投票裁决。";
+          reasonHtml = '<div class="hint small" style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:10px">'
+            + "<b>为什么进仲裁:</b>最初两人标注不一致 —— " + why + "。" + stage + "</div>";
+        }
+        const cards = d.candidates.map((c, i) => {
+          const color = CAND_COLORS[i % CAND_COLORS.length];
+          const isMine = c.annotator === state.me;
+          return '<div class="cand-card' + (isMine ? " mine" : "") + (d.final && d.tally[c.id] ? " chosen" : "") + '">'
+            + '<div class="row"><span class="anon" style="color:' + color + '">' + esc(c.anon)
+            + (isMine ? "(你)" : "") + "</span><span>" + esc(boxSummary(c))
+            + "</span><b>" + (d.tally[c.id] || 0) + " 票</b></div>"
+            + '<div class="row"><span class="meta">' + esc(c.submitted_at)
+            + (c.annotator ? " · 真名:" + esc(c.annotator) : "") + "</span>"
+            + (d.final ? "" : '<button class="btn" data-vote="' + c.id + '"' +
+                (d.my_vote === c.id ? " disabled" : "") + ">" + (d.my_vote === c.id ? "已投" : "投这份") + "</button>")
+            + "</div></div>";
+        }).join("");
+        return reasonHtml + cards
+          + (d.final ? "" : '<p class="hint small">投票规则:<b>全员 4 人都能投,包括已标注的人</b>(匿名状态下凭判断选对的一份,坚持己见也是票);≥3 票且最高组唯一才定稿 —— 2 个人定不了任何图;4 票仍平票,取提交最早的一份(规则公示,非人为裁定)。</p>');
+      })()
     : '<p class="hint">这张图还没有任何有效标注</p>';
   $("rvCands").onclick = async (e) => {
     const b = e.target.closest("[data-vote]");
