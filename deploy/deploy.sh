@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_DIR="/opt/wafer-label/app"
-DATA_DIR="/opt/wafer-label/data"
-BACKUP_DIR="/opt/wafer-label/backup"
-VENV_DIR="/opt/wafer-label/venv"
+APP_DIR="/home/ubuntu/wafer-label/app"
+DATA_DIR="/home/ubuntu/wafer-label/data"
+BACKUP_DIR="/home/ubuntu/wafer-label/backup"
+VENV_DIR="/home/ubuntu/wafer-label/venv"
 SERVICE="wafer-label"
 TS=$(date +%Y%m%d-%H%M%S)
-LOG="/opt/wafer-label/deploy.log"
+LOG="/home/ubuntu/wafer-label/deploy.log"
 
 log()  { echo "[$(date '+%F %T')] $*" | tee -a "$LOG" >&2; }
 fail() { log "❌ $*"; exit 2; }

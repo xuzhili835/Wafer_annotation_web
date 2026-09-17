@@ -56,10 +56,10 @@ zzq:zzq_xxxxxxxx
 
 - 推送 main 分支即自动部署:rsync 代码 → 服务器上 `deploy/deploy.sh`(SQLite 在线备份 →
   pip 装依赖 → `systemctl restart wafer-label` → 本机健康检查)→ 公网 `https://wafer.echeng.xyz/health`。
-- 服务器目录:`/opt/wafer-label/{app,data,backup,venv}`;db、tokens、图片全部在 `data/`,
+- 服务器目录:`/home/ubuntu/wafer-label/{app,data,backup,venv}`;db、tokens、图片全部在 `data/`,
   `app/` 可整目录 `--delete` 同步。
 - 首次准备服务器:把 `docs/服务器准备提示词.md` 全文发给服务器上的 AI;之后只需
-  1) WinSCP 传图片到 `/opt/wafer-label/data`;2) 在 `data/tokens.txt` 放入正式令牌;
+  1) WinSCP 传图片到 `/home/ubuntu/wafer-label/data`;2) 在 `data/tokens.txt` 放入正式令牌;
   3) GitHub 仓库配三个 Secrets:`SSH_PRIVATE_KEY` / `SSH_HOST` / `SSH_USER`。
 
 ## 目录结构

@@ -74,18 +74,18 @@ jobs:
         if: steps.gate.outputs.ok == 'true'
         run: |
           HOST_ARG="${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}"
-          ssh $HOST_ARG "mkdir -p /opt/wafer-label/app /opt/wafer-label/data /opt/wafer-label/backup /opt/wafer-label/venv"
-          rsync -avz --delete app/       $HOST_ARG:/opt/wafer-label/app/app/
-          rsync -avz --delete static/    $HOST_ARG:/opt/wafer-label/app/static/
-          rsync -avz --delete scripts/   $HOST_ARG:/opt/wafer-label/app/scripts/
-          rsync -avz --delete deploy/    $HOST_ARG:/opt/wafer-label/app/deploy/
-          rsync -avz requirements.txt    $HOST_ARG:/opt/wafer-label/app/requirements.txt
+          ssh $HOST_ARG "mkdir -p /home/ubuntu/wafer-label/app /home/ubuntu/wafer-label/data /home/ubuntu/wafer-label/backup /home/ubuntu/wafer-label/venv"
+          rsync -avz --delete app/       $HOST_ARG:/home/ubuntu/wafer-label/app/app/
+          rsync -avz --delete static/    $HOST_ARG:/home/ubuntu/wafer-label/app/static/
+          rsync -avz --delete scripts/   $HOST_ARG:/home/ubuntu/wafer-label/app/scripts/
+          rsync -avz --delete deploy/    $HOST_ARG:/home/ubuntu/wafer-label/app/deploy/
+          rsync -avz requirements.txt    $HOST_ARG:/home/ubuntu/wafer-label/app/requirements.txt
 
       - name: 执行部署脚本
         if: steps.gate.outputs.ok == 'true'
         run: |
           ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-            "bash /opt/wafer-label/app/deploy/deploy.sh"
+            "bash /home/ubuntu/wafer-label/app/deploy/deploy.sh"
 
       - name: 公网健康检查(3 次重试)
         if: steps.gate.outputs.ok == 'true'
