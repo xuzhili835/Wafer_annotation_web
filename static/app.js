@@ -606,18 +606,25 @@ function chipRow(filters, cur, attr, cnt) {
     + label + " " + cnt[k] + "</button>").join("") + "</div>";
 }
 function renderArbList() {
-  // 匿名期列表只分「待你表态 / 你已表态」两组,不标谁标的哪份;排序沿服务端(投票中优先)
+  // 匿名期只按「待我表态 / 已表态」两个视角切换,不标谁标的哪份;排序沿服务端(投票中优先)
+  const cur = state.arbFilter || "todo";
   const all = state.arbOpen || [];
-  const un = all.filter((o) => o.my == null);
-  const done = all.filter((o) => o.my != null);
+  const cnt = {
+    todo: all.filter((o) => o.my == null).length,
+    done: all.filter((o) => o.my != null).length,
+  };
+  const list = cur === "done" ? all.filter((o) => o.my != null) : all.filter((o) => o.my == null);
   const arbItem = (o) => '<div class="arb-item" data-stem="' + esc(o.stem) + '"><code>' + esc(o.stem)
     + "</code><span>" + (o.my != null ? (o.my === -1 ? '<b class="tag-warn">已弃权</b>' : '<b class="tag-ok">已投</b>') : "")
     + (o.cands >= 3 ? o.cands + " 份 · 投票中" : "2 份 · 待第三人") + "</span></div>";
   $("arbList").innerHTML = all.length
-    ? (un.length ? '<div class="arb-group">待你表态(' + un.length + ')</div>' + un.map(arbItem).join("") : "")
-      + (done.length ? '<div class="arb-group">你已表态</div>' + done.map(arbItem).join("") : "")
+    ? chipRow([["todo", "待我表态"], ["done", "已表态"]], cur, "af", cnt)
+      + (list.length ? list.map(arbItem).join("")
+        : '<p class="hint">' + (cur === "done" ? "你还没投过/弃权过任何一张。" : "这里没有待你表态的图了,干得漂亮!") + "</p>")
     : '<p class="hint">没有分歧待决的图,稳!</p>';
   $("arbList").onclick = (e) => {
+    const ch = e.target.closest("[data-af]");
+    if (ch) { state.arbFilter = ch.dataset.af; renderArbList(); return; }
     const it = e.target.closest(".arb-item[data-stem]");
     if (it) openReview(it.dataset.stem);
   };
@@ -747,13 +754,17 @@ async function renderRvComments(stem) {
           '<div class="arb-item" style="cursor:default;flex-direction:column;align-items:flex-start;gap:2px">'
           + "<b>" + esc(c.author) + "</b><span>" + esc(c.text) + '</span><span class="hint inline">' + esc(c.created_at) + "</span></div>").join("")
         : '<p class="hint">还没有讨论,有疑问就说两句。</p>') + "</div>"
-      + '<div class="toolbar" style="margin-top:6px"><input id="cmtText" maxlength="500" style="flex:1;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px" placeholder="对这张图说点什么…(1~500 字)">'
+      + '<div class="toolbar" style="margin-top:6px"><input id="cmtText" type="text" name="comment" autocomplete="off" enterkeyhint="send" maxlength="500" style="flex:1;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px" placeholder="对这张图说点什么…(1~500 字,回车发送)">'
       + '<button class="btn btn-primary" id="cmtSend">发送</button></div>';
     const draft = state.cmtDraft && state.cmtDraft[stem];
     if (draft) $("cmtText").value = draft;
     $("cmtText").oninput = () => {
       state.cmtDraft = state.cmtDraft || {};
       state.cmtDraft[stem] = $("cmtText").value;
+    };
+    // 回车即发;中文输入法选词的那次 Enter(isComposing)不算,防误发
+    $("cmtText").onkeydown = (e) => {
+      if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); $("cmtSend").click(); }
     };
     $("cmtSend").onclick = async () => {
       const t = $("cmtText").value.trim();
@@ -836,29 +847,28 @@ async function openReview(stem) {
                 (d.my_vote === c.id ? " disabled" : "") + ">" + (d.my_vote === c.id ? "已投" : "投这份") + "</button>")
             + "</div></div>";
         }).join("");
-        // 操作区:画布聚焦 + 弃权/自画 收进一个容器,统一小按钮,不再各带各的样式
+        // 操作区拆两处:画布聚焦在上方,弃权/自画在候选卡下方(都在用的时候手边)
         const focusBtns = '<button class="btn btn-sm" data-focus="-1">全部</button>'
           + d.candidates.map((c, i) => '<button class="btn btn-sm" data-focus="' + i + '" title="只看他的框,标签不再互相遮挡">'
             + '<b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">' + esc(c.anon) + "</b></button>").join("");
-        const actionsHtml = '<div class="rv-actions">'
-          + '<div class="rv-row"><span class="rv-label">画布只看</span>' + focusBtns + "</div>"
-          + (d.final ? "" : '<div class="rv-row"><span class="rv-label">拿不准?</span>'
-            + '<button class="btn btn-sm" id="btnAbstain"' + (d.my_vote === -1 ? " disabled" : "") + ">"
-            + (d.my_vote === -1 ? "已弃权(点任意「投这份」可改)" : "弃权:只记录看过,不计票") + "</button>"
-            + '<button class="btn btn-sm" id="btnFixHere" title="提交后自动成为新候选参与判定;已定稿的图会自动重开盲审">都不全/都不对?去画一份正确的 →</button></div>')
-          + "</div>";
+        const focusRow = '<div class="rv-actions"><div class="rv-row"><span class="rv-label">画布只看</span>'
+          + focusBtns + "</div></div>";
+        const opsRow = d.final ? "" : '<div class="rv-actions rv-ops-below"><div class="rv-row"><span class="rv-label">拿不准?</span>'
+          + '<button class="btn btn-sm" id="btnAbstain"' + (d.my_vote === -1 ? " disabled" : "") + ">"
+          + (d.my_vote === -1 ? "已弃权(点任意「投这份」可改)" : "弃权:只记录看过,不计票") + "</button>"
+          + '<button class="btn btn-sm" id="btnFixHere" title="提交后自动成为新候选参与判定;已定稿的图会自动重开盲审">都不全/都不对?去画一份正确的 →</button></div></div>';
         const rulesHtml = d.final
           ? (d.via !== "vote" ? '<p class="hint small">这张<b>没有经过投票</b>:'
               + (d.via === "unanimous" ? "所有标注一致,系统按规则直接定稿"
                 : "第三人补标后与其中一方一致,凑成事实多数,系统自动定稿")
               + '——所以候选上没有票数(或只有零星补投),不是没人管。有异议随时「我有异议」重开。</p>' : "")
-          : '<details class="rv-rules"><summary>投票规则(点开看)</summary><ul>'
+          : '<ul class="rv-rules">'
             + "<li><b>全员 4 人都能投,包括已标注的人</b>——匿名状态下凭判断选,坚持己见也是票</li>"
             + "<li><b>≥3 票且严格过半</b>才定稿,2 个人定不了任何图</li>"
             + "<li><b>平票不自动定稿</b>:群里讨论后,再点另一份「投这份」即可覆盖你原来的票</li>"
             + "<li><b>弃权只留痕不计票</b>:让组里知道这张图有人看过但没把握,想通了随时改投</li>"
-            + "<li>定稿后仍可「我有异议」重开</li></ul></details>";
-        return actionsHtml + reasonHtml + cards + rulesHtml;
+            + "<li>定稿后仍可「我有异议」重开</li></ul>";
+        return focusRow + reasonHtml + cards + opsRow + rulesHtml;
       })()
     : '<p class="hint">这张图还没有任何有效标注</p>';
   $("rvCands").onclick = async (e) => {
@@ -987,7 +997,7 @@ function renderHelp() {
   $("helpFlowBody").innerHTML =
     "<ol><li><b>看图找缺陷</b> —— 640px 灰度硅片图,缺陷可能是线痕、崩边、小点、大片裂纹等;</li>" +
     "<li><b>画框</b> —— 在缺陷上按住拖拽;点框选中后可拖动/四角缩放/右键或 Delete 删除;<b>小缺陷被大框盖住时,按住 <kbd>Alt</kbd>(或 <kbd>Shift</kbd>)拖拽即可在框内强制新建</b>;</li>" +
-    "<li><b>选类别</b> —— 右侧<b>点按钮</b>即可,全程纯鼠标可完成;快捷键(<kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>)是可选提速,选中框后按类别键可直接改它的类;</li>" +
+    "<li><b>选类别</b> —— 右侧<b>点按钮</b>选类即可,用快捷键(<kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>)也行;选中框后按类别键可直接改它的类;</li>" +
     "<li><b>拿不准</b> —— 看参照样例和悬停判定要点;纯无缺陷的图勾「本图无缺陷」或按 <kbd>N</kbd>;</li>" +
     "<li><b>提交</b> —— <kbd>Enter</kbd> 或点提交;之后图进盲审流程,分歧自动加第三人。</li></ol>";
   $("helpCoop").innerHTML =
@@ -1010,18 +1020,23 @@ function renderHelp() {
   const refs = $("helpRefs");
   refs.innerHTML = "";
   state.refLibOpen = state.refLibOpen || {};
+  const allOpen = !!state.refLibAll;
+  refs.insertAdjacentHTML("beforeend",
+    '<div class="reflib-global"><button class="btn btn-sm" id="refAllToggle">'
+    + (allOpen ? "全部收起" : "全部展开") + "</button>"
+    + '<span class="hint inline">默认每类展示 2 张;可单类「展开」,也可一键全展开</span></div>');
   m.codes.forEach((c) => {
     const samples = (state.refs || {})[c] || [];
     if (!samples.length) return;
-    const open = !!state.refLibOpen[c];
+    const open = allOpen || !!state.refLibOpen[c];
     const sec = document.createElement("div");
     sec.className = "reflib-sec";
     sec.insertAdjacentHTML("beforeend", "<div class='reflib-head'><b>" + esc(c + " " + (m.names[c] || ""))
       + '</b><span class="hint inline">' + samples.length + " 张</span>"
-      + '<button class="btn" data-refmore="' + esc(c) + '">' + (open ? "收起" : "展开全部") + "</button></div>");
+      + '<button class="btn btn-sm" data-refmore="' + esc(c) + '">' + (open ? "收起" : "展开 " + samples.length + " 张") + "</button></div>");
     const grid = document.createElement("div");
     grid.className = "ref-grid big";
-    (open ? samples : samples.slice(0, 4)).forEach((r) => {
+    (open ? samples : samples.slice(0, 2)).forEach((r) => {
       const item = document.createElement("div");
       item.className = "ref-item";
       const cvh = document.createElement("canvas");
@@ -1046,6 +1061,11 @@ function renderHelp() {
     refs.appendChild(sec);
   });
   refs.onclick = (e) => {
+    if (e.target.closest("#refAllToggle")) {
+      state.refLibAll = !state.refLibAll;
+      renderHelp();
+      return;
+    }
     const b = e.target.closest("[data-refmore]");
     if (!b) return;
     const c = b.dataset.refmore;
@@ -1067,7 +1087,7 @@ const TUT = [
   { t: "欢迎来到光伏硅片标注站", b: "我们要给 510 张硅片图<b>画框 + 选缺陷类别</b>。<ul><li>每张图会由 2 人独立标注</li><li>分歧自动加第三人盲审,多数票定稿</li><li>全程留痕,标错可改,别有压力</li></ul>跟着引导走一遍(约 1 分钟)。" },
   { t: "看图找缺陷", b: "左边深色区就是硅片图(640×640 灰度)。常见缺陷:<b>线痕</b>(细长线)、<b>崩边</b>(边缘缺损)、<b>隐裂</b>(大片贴边裂纹)、<b>小点斑</b>(孤立小点)。看不准就对照右侧「参照样例」。" },
   { t: "画框", b: "在缺陷上<b>按住鼠标拖拽</b>即画一个框。<ul><li>点框选中,拖动可移位</li><li>拖四角白点可缩放</li><li>右键点框 / 选中按 <kbd>Delete</kbd> 删除</li><li><kbd>Ctrl+Z</kbd> 撤销</li></ul>" },
-  { t: "选类别", b: "右侧 12 个类别按钮,<b>点一下就选中,全程只用鼠标也完全够用</b>——快捷键(角标 <kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>)只是熟练后的提速选项,不用也不影响任何功能。<ul><li>先选类再画框</li><li>点框选中后,按类别键可快速改它的类(纯鼠标的话,右键删掉重画也一样)</li><li>悬停按钮有判定要点</li><li>整图无缺陷:勾选「本图无缺陷」或按 <kbd>N</kbd>,很重要,别硬找框!</li></ul>" },
+  { t: "选类别", b: "右侧 12 个类别按钮,<b>点一下就选中,用快捷键(角标 <kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>)也行</b>,顺手就按,不顺就点,都可以。<ul><li>先选类再画框</li><li>点框选中后,按类别键可快速改它的类</li><li>悬停按钮有判定要点</li><li>整图无缺陷:勾选「本图无缺陷」或按 <kbd>N</kbd>,很重要,别硬找框!</li></ul>" },
   { t: "提交与改判", b: "画完点「提交本图」或按 <kbd>Enter</kbd>,<b>每画一笔自动存草稿</b>,崩了不怕。<ul><li>提交后图进盲审流程</li><li>「回看改判」可重新提交自己标过的未定稿图</li></ul>" },
   { t: "分歧怎么办", b: "两人不一致 → 自动加派第三人盲审 → 僵局全员投票、严格过半定稿;平票不自动定稿,群里协商改票;两份都拿不准可以<b>弃权</b>(只留痕「我看过了」,不计票、不算进定稿,之后可改投覆盖)。<b>定稿前所有人都匿名(甲乙丙丁)</b>,放平心态,你的判断有价值。有异议随时重审,无理由才不受理。" },
   { t: "开始吧!", b: "队列已按你的分配洗好牌,直接开标。规则细节在「帮助与方案」页随时可查。<br><br><b>记住:如实标,不猜目录,不看别人。</b>" },
