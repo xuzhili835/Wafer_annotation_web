@@ -599,7 +599,7 @@ async function loadArb() {
     loadArb();
   }, 20000);
 }
-const FIN_FILTERS = [["mine", "与我有关"], ["rej", "我的被否"], ["all", "全部"]];
+const FIN_FILTERS = [["mine", "与我有关"], ["rej", "我的被否"], ["skip", "未参与"], ["all", "全部"]];
 function chipRow(filters, cur, attr, cnt) {
   return '<div class="arb-chips">' + filters.map(([k, label]) =>
     '<button class="chip2' + (cur === k ? " on" : "") + '" data-' + attr + '="' + k + '">'
@@ -643,11 +643,13 @@ function renderFinList() {
   const cnt = {
     mine: all.filter((o) => o.ann || o.vote).length,
     rej: all.filter((o) => o.ann && !o.ann_final).length,
+    skip: all.filter((o) => !o.ann && !o.vote).length,
     all: all.length,
   };
   let list = all;
   if (cur === "mine") list = all.filter((o) => o.ann || o.vote);
   else if (cur === "rej") list = all.filter((o) => o.ann && !o.ann_final);
+  else if (cur === "skip") list = all.filter((o) => !o.ann && !o.vote);
   const VIA = { vote: "投票定稿", majority: "多数一致", unanimous: "全一致" };
   const VIA_NOTE = {
     vote: "三人各有说法,全组盲投,票多且过半者定 · 建议优先复查",
