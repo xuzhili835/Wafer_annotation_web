@@ -593,6 +593,12 @@ class VoteBody(BaseModel):
 def vote(body: VoteBody, user: str = Depends(current_user)):
     conn = connect()
     try:
+        img = conn.execute("SELECT final_id FROM images WHERE stem=?", (body.stem,)).fetchone()
+        if not img:
+            raise HTTPException(404, "没有这张图")
+        if img["final_id"]:
+            # 定稿图不收票:面板上看到的票都是定稿前的留痕(如提前投票),防止定稿后票数继续变
+            raise HTTPException(409, "这张图已定稿,不能再投票;有异议请走「我有异议」重开")
         if body.chosen_id != -1:  # -1 = 弃权:看过但拿不准,只留痕不计票,定稿引擎不计入
             c = conn.execute("SELECT id FROM annotations WHERE id=? AND stem=? AND revoked=0",
                              (body.chosen_id, body.stem)).fetchone()

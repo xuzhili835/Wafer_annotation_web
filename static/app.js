@@ -599,7 +599,6 @@ async function loadArb() {
     loadArb();
   }, 20000);
 }
-const ARB_FILTERS = [["todo", "待我表态"], ["mine", "我标注的"], ["all", "全部"]];
 const FIN_FILTERS = [["mine", "与我有关"], ["rej", "我的被否"], ["all", "全部"]];
 function chipRow(filters, cur, attr, cnt) {
   return '<div class="arb-chips">' + filters.map(([k, label]) =>
@@ -607,34 +606,18 @@ function chipRow(filters, cur, attr, cnt) {
     + label + " " + cnt[k] + "</button>").join("") + "</div>";
 }
 function renderArbList() {
-  const cur = state.arbFilter || "todo";
+  // 匿名期列表只分「待你表态 / 你已表态」两组,不标谁标的哪份;排序沿服务端(投票中优先)
   const all = state.arbOpen || [];
-  const cnt = {
-    todo: all.filter((o) => o.my == null).length,
-    mine: all.filter((o) => o.involved).length,
-    all: all.length,
-  };
-  let list = all;
-  if (cur === "todo") list = all.filter((o) => o.my == null);
-  else if (cur === "mine") list = all.filter((o) => o.involved);
-  list = list.slice().sort((a, b) => (b.involved - a.involved) || (b.cands - a.cands)
-    || a.stem.localeCompare(b.stem));
-  const un = list.filter((o) => o.my == null);
-  const done = list.filter((o) => o.my != null);
+  const un = all.filter((o) => o.my == null);
+  const done = all.filter((o) => o.my != null);
   const arbItem = (o) => '<div class="arb-item" data-stem="' + esc(o.stem) + '"><code>' + esc(o.stem)
-    + "</code><span>" + (o.involved ? '<b class="tag-info">我标的</b> · ' : "")
-    + (o.my != null ? (o.my === -1 ? '<b class="tag-warn">已弃权</b> · ' : '<b class="tag-ok">已投</b> · ') : "")
-    + (o.cands >= 3 ? o.cands + " 份标注 · 投票中 →" : "2 份分歧 · 待第三人 →") + "</span></div>";
-  const body = (un.length || done.length)
-    ? (un.length ? '<div class="arb-group">待你表态(' + un.length + ')</div>' + un.map(arbItem).join("") : "")
-      + (done.length ? '<div class="arb-group">你已表态(改投/弃权可覆盖,讨论后随时改)</div>' + done.map(arbItem).join("") : "")
-    : '<p class="hint">' + (cur === "all" ? "没有分歧待决的图,稳!" : "这个筛选下没有图,点上面「全部」看看。") + "</p>";
+    + "</code><span>" + (o.my != null ? (o.my === -1 ? '<b class="tag-warn">已弃权</b>' : '<b class="tag-ok">已投</b>') : "")
+    + (o.cands >= 3 ? o.cands + " 份 · 投票中" : "2 份 · 待第三人") + "</span></div>";
   $("arbList").innerHTML = all.length
-    ? chipRow(ARB_FILTERS, cur, "af", cnt) + body
+    ? (un.length ? '<div class="arb-group">待你表态(' + un.length + ')</div>' + un.map(arbItem).join("") : "")
+      + (done.length ? '<div class="arb-group">你已表态</div>' + done.map(arbItem).join("") : "")
     : '<p class="hint">没有分歧待决的图,稳!</p>';
   $("arbList").onclick = (e) => {
-    const ch = e.target.closest("[data-af]");
-    if (ch) { state.arbFilter = ch.dataset.af; renderArbList(); return; }
     const it = e.target.closest(".arb-item[data-stem]");
     if (it) openReview(it.dataset.stem);
   };
@@ -650,27 +633,30 @@ function renderFinList() {
   let list = all;
   if (cur === "mine") list = all.filter((o) => o.ann || o.vote);
   else if (cur === "rej") list = all.filter((o) => o.ann && !o.ann_final);
-  const VIA = { vote: "投票定稿", majority: "多数一致定稿", unanimous: "全部一致定稿" };
-  const relTags = (o) => (o.ann_final ? '<b class="tag-ok">我的✓</b>'
-      : o.ann ? '<b class="tag-warn">我的✗</b>' : "")
-    + (o.vote ? (o.vote_final ? ' <b class="tag-ok">投✓</b>' : ' <b class="tag-warn">投✗</b>') : "");
-  const finItem = (o) => '<div class="arb-item" data-fstem="' + esc(o.stem) + '"><code>' + esc(o.stem)
-    + "</code><span>" + relTags(o)
-    + ' <b class="' + (o.via === "vote" ? "tag-warn" : "tag-ok") + '">' + (VIA[o.via] || o.via) + "</b>"
-    + (o.round > 1 ? " · 第 " + o.round + " 轮" : "") + " · 查看/异议 →</span></div>";
+  const VIA = { vote: "投票定稿", majority: "多数一致", unanimous: "全一致" };
+  const VIA_TIP = { vote: "≥3 票人工裁决,建议优先复查",
+    majority: "第三人补标与一方一致,事实多数自动定稿(没走投票)",
+    unanimous: "所有标注一致,自动定稿,置信最高" };
+  // 每条最多两个标签:关系(我的✓/✗)+ 定稿方式;完整解释悬停可见
+  const finItem = (o) => {
+    const rel = o.ann_final ? '<b class="tag-ok" title="定稿采纳了我的标注">我的✓</b>'
+      : o.ann ? '<b class="tag-warn" title="我的标注被否;点开复核,不服就「我有异议」">我的✗</b>' : "";
+    const round = o.round > 1 ? " · 第" + o.round + "轮" : "";
+    return '<div class="arb-item" data-fstem="' + esc(o.stem) + '"><code>' + esc(o.stem) + "</code>"
+      + '<span class="fin-tags">' + rel
+      + '<b class="' + (o.via === "vote" ? "tag-warn" : "tag-ok") + '" title="' + VIA_TIP[o.via] + '">'
+      + (VIA[o.via] || o.via) + "</b>" + round + "</span></div>";
+  };
   const fv = { vote: list.filter((o) => o.via === "vote"),
                majority: list.filter((o) => o.via === "majority"),
                unanimous: list.filter((o) => o.via === "unanimous") };
-  const legend = '<div class="arb-group" style="font-weight:400;letter-spacing:0">'
-    + "我的✓=定稿采纳了我的标注 · 我的✗=我的标注被否 · 投✓/投✗=我的票投中/被改</div>";
   const body = list.length
     ? (["vote", "majority", "unanimous"].filter((k) => fv[k].length).map((k) =>
-        '<div class="arb-group">' + VIA[k] + "(" + fv[k].length + ")"
-        + (k === "vote" ? " · 人工裁决,优先复查" : k === "majority" ? " · 事实多数,没走投票" : " · 置信最高") + "</div>"
+        '<div class="arb-group" title="' + VIA_TIP[k] + '">' + VIA[k] + "(" + fv[k].length + ")</div>"
         + fv[k].map(finItem).join("")).join(""))
-    : '<p class="hint">' + (cur === "all" ? "还没有定稿的图" : "这个筛选下没有图,点上面「全部」看全部定稿。") + "</p>";
+    : '<p class="hint">' + (cur === "all" ? "还没有定稿的图" : "这个筛选下没有图,点「全部」看全部定稿。") + "</p>";
   $("finList").innerHTML = all.length
-    ? chipRow(FIN_FILTERS, cur, "ff", cnt) + legend + body
+    ? chipRow(FIN_FILTERS, cur, "ff", cnt) + body
     : '<p class="hint">还没有定稿的图</p>';
   $("finList").onclick = (e) => {
     const ch = e.target.closest("[data-ff]");
@@ -829,7 +815,7 @@ async function openReview(stem) {
           const stage = d.candidates.length === 2
             ? "现在:系统<b>已自动把这张图加派给第三人盲标</b>(第三人提交自己的标注,不是投票);他与任一方一致即直接定稿,无需投票。若等不及,也可在下方提前投。"
             : "现在:第三人已补标,但<b>仍凑不出过半数一致</b>(三人各有说法)→ 进入全员投票裁决。";
-          reasonHtml = '<div class="hint small" style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:10px">'
+          reasonHtml = '<div class="hint small" style="border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:10px;max-width:600px">'
             + "<b>为什么进仲裁:</b>最初两人标注不一致 —— " + why + "。" + stage + "</div>";
         }
         const cards = d.candidates.map((c, i) => {
@@ -838,7 +824,7 @@ async function openReview(stem) {
           const chosen = d.final && c.id === d.final_id;
           // 非投票定稿不显示票数(全一致/多数一致时"0 票"只会让人困惑),标出定稿的那份
           const votesCell = !d.final || d.via === "vote"
-            ? "<b>" + (d.tally[c.id] || 0) + " 票</b>"
+            ? '<b class="votes-pill">' + (d.tally[c.id] || 0) + " 票</b>"
             : (chosen ? '<b class="tag-ok">' + (d.via === "unanimous" ? "全一致定稿" : "多数一致定稿") + "</b>" : "");
           return '<div class="cand-card' + (isMine ? " mine" : "") + (chosen ? " chosen" : "") + '">'
             + '<div class="row"><span class="anon" style="color:' + color + '">' + esc(c.anon)
@@ -850,25 +836,29 @@ async function openReview(stem) {
                 (d.my_vote === c.id ? " disabled" : "") + ">" + (d.my_vote === c.id ? "已投" : "投这份") + "</button>")
             + "</div></div>";
         }).join("");
-        const focusBar = '<div class="toolbar" style="margin:0 0 8px"><span class="hint inline">画布只看:</span>'
-          + '<button class="btn" data-focus="-1">全部</button>'
-          + d.candidates.map((c, i) => '<button class="btn" data-focus="' + i + '">'
-            + '<b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">' + esc(c.anon) + "</b></button>").join("")
-          + '<span class="hint inline">点某人只看他的框,标签不再互相遮挡</span></div>';
-        const fixBtn = '<div class="toolbar" style="margin:0 0 8px"><button class="btn" id="btnFixHere">'
-          + "三份都不全/都不对?去标注页<b>自己画一份正确的</b> →</button>"
-          + '<span class="hint inline">提交后自动成为新候选参与判定;已定稿的图会自动重开盲审</span></div>';
-        const abstainBtn = d.final ? "" : '<div class="toolbar" style="margin:0 0 8px"><button class="btn" id="btnAbstain"'
-          + (d.my_vote === -1 ? " disabled" : "") + ">"
-          + (d.my_vote === -1 ? "已弃权 · 想改就点上面任意「投这份」覆盖" : "两份都拿不准?<b>弃权</b>(只记录我看过了,不计票、不算进定稿)")
-          + "</button></div>";
-        return focusBar + fixBtn + reasonHtml + cards + abstainBtn
-          + (d.final
-            ? (d.via !== "vote" ? '<p class="hint small">这张<b>没有经过投票</b>:'
-                + (d.via === "unanimous" ? "所有标注一致,系统按规则直接定稿"
-                  : "第三人补标后与其中一方一致,凑成事实多数,系统自动定稿")
-                + '——所以候选上没有票数(或只有零星补投),不是没人管。有异议随时「我有异议」重开。</p>' : "")
-            : '<p class="hint small">投票规则:<b>全员 4 人都能投,包括已标注的人</b>(匿名状态下凭判断选对的一份,坚持己见也是票);≥3 票且<b>严格过半</b>才定稿 —— 2 个人定不了任何图;<b>平票不自动定稿</b>:群里讨论后,再点另一份「投这份」即可覆盖你原来的票;<b>弃权只留痕不计票</b>,让组里知道这张图有人看过但没把握;定稿后仍可「我有异议」重开。</p>');
+        // 操作区:画布聚焦 + 弃权/自画 收进一个容器,统一小按钮,不再各带各的样式
+        const focusBtns = '<button class="btn btn-sm" data-focus="-1">全部</button>'
+          + d.candidates.map((c, i) => '<button class="btn btn-sm" data-focus="' + i + '" title="只看他的框,标签不再互相遮挡">'
+            + '<b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">' + esc(c.anon) + "</b></button>").join("");
+        const actionsHtml = '<div class="rv-actions">'
+          + '<div class="rv-row"><span class="rv-label">画布只看</span>' + focusBtns + "</div>"
+          + (d.final ? "" : '<div class="rv-row"><span class="rv-label">拿不准?</span>'
+            + '<button class="btn btn-sm" id="btnAbstain"' + (d.my_vote === -1 ? " disabled" : "") + ">"
+            + (d.my_vote === -1 ? "已弃权(点任意「投这份」可改)" : "弃权:只记录看过,不计票") + "</button>"
+            + '<button class="btn btn-sm" id="btnFixHere" title="提交后自动成为新候选参与判定;已定稿的图会自动重开盲审">都不全/都不对?去画一份正确的 →</button></div>')
+          + "</div>";
+        const rulesHtml = d.final
+          ? (d.via !== "vote" ? '<p class="hint small">这张<b>没有经过投票</b>:'
+              + (d.via === "unanimous" ? "所有标注一致,系统按规则直接定稿"
+                : "第三人补标后与其中一方一致,凑成事实多数,系统自动定稿")
+              + '——所以候选上没有票数(或只有零星补投),不是没人管。有异议随时「我有异议」重开。</p>' : "")
+          : '<details class="rv-rules"><summary>投票规则(点开看)</summary><ul>'
+            + "<li><b>全员 4 人都能投,包括已标注的人</b>——匿名状态下凭判断选,坚持己见也是票</li>"
+            + "<li><b>≥3 票且严格过半</b>才定稿,2 个人定不了任何图</li>"
+            + "<li><b>平票不自动定稿</b>:群里讨论后,再点另一份「投这份」即可覆盖你原来的票</li>"
+            + "<li><b>弃权只留痕不计票</b>:让组里知道这张图有人看过但没把握,想通了随时改投</li>"
+            + "<li>定稿后仍可「我有异议」重开</li></ul></details>";
+        return actionsHtml + reasonHtml + cards + rulesHtml;
       })()
     : '<p class="hint">这张图还没有任何有效标注</p>';
   $("rvCands").onclick = async (e) => {
