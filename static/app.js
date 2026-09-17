@@ -227,18 +227,19 @@ function canvasPos(e) {
   return { x: Math.round((e.clientX - r.left) * 640 / r.width),
            y: Math.round((e.clientY - r.top) * 640 / r.height) };
 }
-function drawRect(g, b, color, lw, label) {
+function drawRect(g, b, color, lw, label, labelRow) {
   g.strokeStyle = color; g.lineWidth = lw;
   g.fillStyle = color + "14";
   g.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
   g.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
   if (label) {
+    const row = labelRow || 0;                 // 多候选叠加时标签按层错开,不被别的框盖住
     g.font = "600 16px Segoe UI, sans-serif";
     const t = label, tw = g.measureText(t).width + 8;
     g.fillStyle = color;
-    g.fillRect(b.x0, Math.max(0, b.y0 - 20), tw, 19);
+    g.fillRect(b.x0, Math.max(0, b.y0 - 20 - row * 20), tw, 19);
     g.fillStyle = "#0b1220";
-    g.fillText(t, b.x0 + 4, Math.max(14, b.y0 - 6));
+    g.fillText(t, b.x0 + 4, Math.max(14, b.y0 - 6 - row * 20));
   }
 }
 function render() {
@@ -557,10 +558,12 @@ async function openReview(stem) {
   const rc = $("rv"), g = rc.getContext("2d");
   g.clearRect(0, 0, 640, 640);
   g.fillStyle = "#0b1220"; g.fillRect(0, 0, 640, 640);
+  state.rvFocus = null; state.rvData = null; state.rvImg = null;
   const img = new Image();
   img.onload = () => {
     if (state.rvStem !== stem) return;                      // 面板已切到别的图
-    g.drawImage(img, 0, 0, 640, 640); paintCands(g, d);
+    state.rvImg = img; state.rvData = d;
+    g.drawImage(img, 0, 0, 640, 640); paintCands(g, d, state.rvFocus);
   };
   state.rvStem = stem;
   img.src = "/api/image/" + stem + ".webp";
@@ -603,11 +606,25 @@ async function openReview(stem) {
                 (d.my_vote === c.id ? " disabled" : "") + ">" + (d.my_vote === c.id ? "已投" : "投这份") + "</button>")
             + "</div></div>";
         }).join("");
-        return reasonHtml + cards
+        const focusBar = '<div class="toolbar" style="margin:0 0 8px"><span class="hint inline">画布只看:</span>'
+          + '<button class="btn" data-focus="-1">全部</button>'
+          + d.candidates.map((c, i) => '<button class="btn" data-focus="' + i + '">'
+            + '<b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">' + esc(c.anon) + "</b></button>").join("")
+          + '<span class="hint inline">点某人只看他的框,标签不再互相遮挡</span></div>';
+        return focusBar + reasonHtml + cards
           + (d.final ? "" : '<p class="hint small">投票规则:<b>全员 4 人都能投,包括已标注的人</b>(匿名状态下凭判断选对的一份,坚持己见也是票);≥3 票且<b>严格过半</b>才定稿 —— 2 个人定不了任何图;<b>平票不自动定稿</b>:群里讨论后,再点另一份「投这份」即可覆盖你原来的票;定稿后仍可「我有异议」重开。</p>');
       })()
     : '<p class="hint">这张图还没有任何有效标注</p>';
   $("rvCands").onclick = async (e) => {
+    const f = e.target.closest("[data-focus]");
+    if (f) {
+      state.rvFocus = parseInt(f.dataset.focus, 10);
+      document.querySelectorAll('#rvCands [data-focus]').forEach((x) => {
+        x.style.opacity = parseInt(x.dataset.focus, 10) === state.rvFocus ? "1" : "0.55";
+      });
+      redrawRv();
+      return;
+    }
     const b = e.target.closest("[data-vote]");
     if (!b) return;
     try {
@@ -634,12 +651,25 @@ function rvMsg(t) {
   $("rvMsg").textContent = t;
   $("rvMsg").classList.remove("hidden");
 }
-function paintCands(g, d) {
+function paintCands(g, d, focus) {
   const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
   d.candidates.forEach((c, i) => {
     const color = CAND_COLORS[i % CAND_COLORS.length];
-    (c.boxes || []).forEach((b) => drawRect(g, b, color, 3, c.anon + "·" + CN(b.code)));
+    const dim = focus !== undefined && focus !== null && focus >= 0 && focus !== i;
+    g.globalAlpha = dim ? 0.15 : 1;
+    (c.boxes || []).forEach((b) => drawRect(g, b, color, dim ? 2 : 3,
+      dim ? undefined : c.anon + "·" + CN(b.code), dim ? 0 : i));
+    g.globalAlpha = 1;
   });
+}
+function redrawRv() {
+  const d = state.rvData;
+  if (!d || state.rvStem !== d.stem) return;
+  const g = $("rv").getContext("2d");
+  g.clearRect(0, 0, 640, 640);
+  g.fillStyle = "#0b1220"; g.fillRect(0, 0, 640, 640);
+  if (state.rvImg) g.drawImage(state.rvImg, 0, 0, 640, 640);
+  paintCands(g, d, state.rvFocus);
 }
 
 /* ---------- 导出与封板 ---------- */
