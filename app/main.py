@@ -574,11 +574,18 @@ def review(stem: str, user: str = Depends(current_user)):
             "submitted_at": c["submitted_at"],
             "annotator": (c["annotator"] if revealed else None),
         } for c in cands]
+        # 定稿簇:与定稿标注一致的所有候选(一致定稿时可能多于一条),只给定稿后,防泄露
+        winners = []
+        if revealed:
+            fin_ann = next((c for c in cands if c["id"] == img["final_id"]), None)
+            if fin_ann is not None:
+                winners = [c["id"] for c in cands if boxes_match(fin_ann, c)]
         return {"stem": stem, "final": bool(img["final_id"]), "revealed": revealed,
                 "candidates": out_cands, "tally": dict(tally), "votes": len(votes),
                 "abstains": abstains, "my_vote": my_vote, "round": round_no,
                 "final_id": img["final_id"] if revealed else None,
                 "via": _settle_via(conn, stem, img["final_id"], round_no) if revealed else None,
+                "winners": winners,
                 "disputes": [dict(d) for d in disputes]}
     finally:
         conn.close()
@@ -656,18 +663,24 @@ def arbitration(scope: str = "open", user: str = Depends(current_user)):
                     continue
                 rnd = conn.execute("SELECT COALESCE(MAX(round),1) r FROM votes WHERE stem=?",
                                    (r["stem"],)).fetchone()["r"]
-                # 与我相关(前端"与我有关/我的被否"筛选、标签):ann*=我的标注, vote*=我的票
-                my_anns = {c["id"] for c in _candidates(conn, r["stem"]) if c["annotator"] == user}
+                # 与我相关:按"与定稿是否一致(同码 IoU≥0.6)"判定,不按最终那条代表是谁。
+                # 一致定稿时两人都算"被采纳",只有真分歧(类别/位置不合)才算"被否"。
+                cands = _candidates(conn, r["stem"])
+                fin_ann = next((c for c in cands if c["id"] == r["final_id"]), None)
+                my_anns = [c for c in cands if c["annotator"] == user]
                 mv = conn.execute(
                     "SELECT chosen_id FROM votes WHERE stem=? AND reviewer=? AND round=?",
                     (r["stem"], user, rnd)).fetchone()
                 my_choice = mv["chosen_id"] if mv else None
+                my_choice_ann = next((c for c in cands if c["id"] == my_choice), None) \
+                    if my_choice is not None and my_choice != -1 else None
                 out.append({"stem": r["stem"], "round": rnd,
                             "via": _settle_via(conn, r["stem"], r["final_id"], rnd),
                             "ann": bool(my_anns),
-                            "ann_final": r["final_id"] in my_anns,
-                            "vote": my_choice is not None and my_choice != -1,
-                            "vote_final": my_choice == r["final_id"]})
+                            "ann_final": bool(fin_ann) and any(boxes_match(fin_ann, c) for c in my_anns),
+                            "vote": my_choice_ann is not None,
+                            "vote_final": bool(fin_ann is not None and my_choice_ann is not None
+                                               and boxes_match(fin_ann, my_choice_ann))})
                 continue
             if r["final_id"]:
                 continue

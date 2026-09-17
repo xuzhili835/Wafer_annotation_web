@@ -659,7 +659,7 @@ function renderFinList() {
   // 每条最多两个标签:关系(我的✓/✗)+ 定稿方式;完整解释悬停可见
   const finItem = (o) => {
     const rel = o.ann_final ? '<b class="tag-ok" title="定稿采纳了我的标注">我的✓</b>'
-      : o.ann ? '<b class="tag-warn" title="我的标注被否;点开复核,不服就「我有异议」">我的✗</b>' : "";
+      : o.ann ? '<b class="tag-warn" title="我的标注与定稿真不一致;点开复核,不服就「我有异议」">我的✗</b>' : "";
     const round = o.round > 1 ? " · 第" + o.round + "轮" : "";
     return '<div class="arb-item" data-fstem="' + esc(o.stem) + '"><code>' + esc(o.stem) + "</code>"
       + '<span class="fin-tags">' + rel
@@ -845,11 +845,11 @@ async function openReview(stem) {
         const cards = d.candidates.map((c, i) => {
           const color = CAND_COLORS[i % CAND_COLORS.length];
           const isMine = c.annotator === state.me;
-          const chosen = d.final && c.id === d.final_id;
-          // 非投票定稿不显示票数(全一致/多数一致时"0 票"只会让人困惑),标出定稿的那份
+          const chosen = d.final && (d.winners || []).includes(c.id);
+          // 非投票定稿不显示票数,定稿簇内每份都标"一致采纳"(可能不止一张)
           const votesCell = !d.final || d.via === "vote"
             ? '<b class="votes-pill">' + (d.tally[c.id] || 0) + " 票</b>"
-            : (chosen ? '<b class="tag-ok">' + (d.via === "unanimous" ? "全一致定稿" : "多数一致定稿") + "</b>" : "");
+            : (chosen ? '<b class="tag-ok">' + (d.via === "unanimous" ? "一致采纳" : "多数一致采纳") + "</b>" : "");
           return '<div class="cand-card' + (isMine ? " mine" : "") + (chosen ? " chosen" : "") + '">'
             + '<div class="row"><span class="anon" style="color:' + color + '">' + esc(c.anon)
             + (isMine ? "(你)" : "") + "</span><span>" + esc(boxSummary(c))

@@ -124,6 +124,7 @@ def test_two_agree_auto_final(client):
     assert r.get("final_id")
     rv = client.get("/api/review/img_00", headers=H("cmx")).json()
     assert rv["via"] == "unanimous" and rv["final_id"] == r["final_id"]
+    assert len(rv["winners"]) == 2, "一致定稿簇应含两份,不只点亮最早那份"
 
 
 def test_arbitration_final_scope(client):
@@ -614,6 +615,10 @@ def test_settle_via_unanimous_and_majority(client):
     submit(client, "hce", "img_07", [B("BYW", 11, 10, 40, 40)])   # IoU 高 → 一致定稿
     fin = client.get("/api/arbitration?scope=final", headers=H("cmx")).json()["list"]
     assert next(x for x in fin if x["stem"] == "img_07")["via"] == "unanimous"
+    # 一致定稿:后提交的 hce 与定稿一致 → 同样算"被采纳",不得进"我的被否"
+    fin_hce = client.get("/api/arbitration?scope=final", headers=H("hce")).json()["list"]
+    o7 = next(x for x in fin_hce if x["stem"] == "img_07")
+    assert o7["ann"] and o7["ann_final"], "一致即采纳,不论定稿代表选了谁那份"
     # 分歧 → 第三人与 cmx 一致 → 事实多数(2/3)定稿,无投票 → majority
     submit(client, "cmx", "img_08", [B("DQK", 10, 10, 50, 50)])
     r = submit(client, "hce", "img_08", [B("XQK", 10, 10, 50, 50)])
