@@ -43,6 +43,8 @@ if n_img < 1:
     raise SystemExit("备份校验失败:images 为空,拒绝继续部署")
 PY
     log "✓ 已备份到 $BACKUP_DIR/labels.$TS.db"
+    # 滚动清理:只保留最近 20 份部署备份(MANUAL-SAFE 手动快照永久豁免)
+    ls -1t "$BACKUP_DIR"/labels.*.db 2>/dev/null | grep -v MANUAL-SAFE | tail -n +21 | xargs -r rm -f
 else
     log "(数据库不存在,首次部署,跳过备份)"
 fi

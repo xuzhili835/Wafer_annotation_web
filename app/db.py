@@ -64,6 +64,8 @@ def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    # 两人同时提交时写锁偶发冲突:等待 5s 而非立即抛 database is locked(用户侧 500)
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
 
@@ -109,11 +111,10 @@ def _ensure_images(conn: sqlite3.Connection) -> None:
         return
     if not DATA_DIR.exists():
         return
-    # 「测试集」目录是产线参照样例(只读),绝不入标注库、绝不进队列;
-    # 不排除的话,将来库一旦重建,537 张测试图会被当训练图分配出去
-    files = sorted(p for p in DATA_DIR.rglob("*")
-                   if p.suffix.lower() in IMG_EXTS
-                   and "测试集" not in p.relative_to(DATA_DIR).parts)
+    # 白名单只扫训练集目录:测试集(产线参照,只读)与其余任何目录绝不入标注库、
+    # 绝不进队列——否则库一旦重建,537 张测试图会被当训练图分配出去,污染测试基准
+    files = sorted(p for p in (DATA_DIR / "训练集").rglob("*")
+                   if p.suffix.lower() in IMG_EXTS)
     if not files:
         return
     from PIL import Image
@@ -153,3 +154,7 @@ def _ensure_images(conn: sqlite3.Connection) -> None:
         rows,
     )
     conn.commit()
+    # 防静默吞图:INSERT OR IGNORE 遇 stem 冲突会悄悄少行,播种后必须账实相符
+    seeded = conn.execute("SELECT COUNT(*) c FROM images").fetchone()["c"]
+    if seeded != len(files):
+        raise SystemExit(f"图片播种不完整:入库 {seeded} 张,扫描到 {len(files)} 张,拒绝启动")

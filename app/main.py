@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from app import export
 from app.auth import current_user
 from app.config import (ANON_NAMES, CODES, CODE_COLORS, CODE_KEYS, CODE_NAMES,
-                        DATA_DIR, HOST, IOU_MATCH_THR, PORT, RARE_CODES)
+                        DATA_DIR, HOST, IOU_MATCH_THR, MEMBERS, PORT, RARE_CODES)
 from app.db import connect, init_db
 
 app = FastAPI(title="Wafer Annotation Web", version="0.1.0")
@@ -61,8 +61,9 @@ def login(body: LoginBody):
         if not row:
             raise HTTPException(401, "令牌无效:请核对后重试")
         resp = Response(content=json.dumps({"name": row["name"]}), media_type="application/json")
+        # secure=True:令牌 cookie 只在 HTTPS 连接回传(CF 边缘 TLS),http 明文段不再携带
         resp.set_cookie("wafer_token", body.token, max_age=7 * 24 * 3600,
-                        httponly=True, samesite="lax")
+                        httponly=True, samesite="lax", secure=True)
         return resp
     finally:
         conn.close()
@@ -655,8 +656,7 @@ def progress(user: str = Depends(current_user)):
         anns: dict[str, list] = {}
         for r in conn.execute("SELECT * FROM annotations WHERE revoked=0 ORDER BY submitted_at,id"):
             anns.setdefault(r["stem"], []).append(r)
-        cells, per_person = [], {m: {"assigned": 0, "submitted": 0} for m in
-                                 ("cmx", "hce", "zj", "zzq")}
+        cells, per_person = [], {m: {"assigned": 0, "submitted": 0} for m in MEMBERS}
         for im in imgs:
             stem = im["stem"]
             cands = anns.get(stem, [])

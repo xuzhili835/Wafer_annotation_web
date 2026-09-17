@@ -35,9 +35,10 @@ TOKENS = {m: f"{m}_testtoken" for m in cfg.MEMBERS}
 def _make_data(tmp_path, n=6, size=64):
     from PIL import Image
     data = tmp_path / "data"
-    data.mkdir(parents=True, exist_ok=True)
+    train = data / "训练集"
+    train.mkdir(parents=True, exist_ok=True)
     for i in range(n):
-        Image.new("L", (size, size), color=i * 30 % 255).save(data / f"img_{i:02d}.png")
+        Image.new("L", (size, size), color=i * 30 % 255).save(train / f"img_{i:02d}.png")
     # 产线参照样例(测试集,只读):绝不进 images 表
     # X 目录的图带 2 个 HB 框 → 按框码组织时 HB 样例应能跨目录收集到且排最前
     for code in ("X", "HB"):
@@ -292,7 +293,8 @@ def test_me_anonymous_returns_null_not_401(client):
 
 
 def test_logout_clears_cookie(client):
-    c = TestClient(main_mod.app)
+    # cookie 已带 secure 标记(只随 HTTPS 回传):测试须走 https 基址,浏览器端公网即 https
+    c = TestClient(main_mod.app, base_url="https://testserver")
     assert c.post("/api/login", json={"token": TOKENS["zj"]}).status_code == 200
     assert c.get("/api/queue").status_code == 200, "登录后 cookie 通道可用"
     c.post("/api/logout")
