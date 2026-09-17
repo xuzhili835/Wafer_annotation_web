@@ -620,14 +620,27 @@ function renderArbList() {
     todo: all.filter((o) => o.my == null).length,
     done: all.filter((o) => o.my != null).length,
   };
-  const list = cur === "done" ? all.filter((o) => o.my != null) : all.filter((o) => o.my == null);
+  let list = cur === "done" ? all.filter((o) => o.my != null) : all.filter((o) => o.my == null);
   const arbItem = (o) => '<div class="arb-item" data-stem="' + esc(o.stem) + '"><code>' + esc(o.stem)
     + "</code><span>" + (o.my != null ? (o.my === -1 ? '<b class="tag-warn">已弃权</b>' : '<b class="tag-ok">已投</b>') : "")
     + (o.cands >= 3 ? o.cands + " 份 · 投票中" : "2 份 · 待第三人") + "</span></div>";
+  // 已表态视图内部分组:弃权 = 没做完的决定,排在最上优先回头改投
+  let body;
+  if (cur !== "done") {
+    body = list.length ? list.map(arbItem).join("")
+      : '<p class="hint">这里没有待你表态的图了,干得漂亮!</p>';
+  } else {
+    const abs = list.filter((o) => o.my === -1);
+    const voted = list.filter((o) => o.my !== -1);
+    body = list.length
+      ? (abs.length ? '<div class="arb-group" title="弃权=看过但拿不准;群里有结论了就点开改投">你弃权的(' + abs.length + ")</div>"
+          + abs.map(arbItem).join("") : "")
+        + (voted.length ? '<div class="arb-group">你已投的(' + voted.length + ")</div>"
+          + voted.map(arbItem).join("") : "")
+      : '<p class="hint">你还没投过/弃权过任何一张。</p>';
+  }
   $("arbList").innerHTML = all.length
-    ? chipRow([["todo", "待我表态"], ["done", "已表态"]], cur, "af", cnt)
-      + (list.length ? list.map(arbItem).join("")
-        : '<p class="hint">' + (cur === "done" ? "你还没投过/弃权过任何一张。" : "这里没有待你表态的图了,干得漂亮!") + "</p>")
+    ? chipRow([["todo", "待我表态"], ["done", "已表态"]], cur, "af", cnt) + body
     : '<p class="hint">没有分歧待决的图,稳!</p>';
   $("arbList").onclick = (e) => {
     const ch = e.target.closest("[data-af]");
