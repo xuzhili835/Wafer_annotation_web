@@ -286,6 +286,14 @@ function pushUndo() {
 cv.addEventListener("mousedown", (e) => {
   if (state.isEmpty) return;
   const p = canvasPos(e);
+  if (e.altKey || e.shiftKey) {
+    // 强制新建:多个缺陷堆在一起时,先框了大的,按住 Alt(或 Shift)拖即可在里面框小的
+    state.sel = -1;
+    pushUndo();
+    drag = { type: "new", box: { code: state.activeCode, x0: p.x, y0: p.y, x1: p.x, y1: p.y } };
+    render();
+    return;
+  }
   const h = hitHandle(p);
   if (h) { pushUndo(); drag = { type: "resize", ...h }; return; }
   const i = hitBox(p);
@@ -305,7 +313,8 @@ cv.addEventListener("mousemove", (e) => {
   $("cvPos").textContent = "x=" + p.x + " y=" + p.y;
   if (!drag) {
     const h = hitHandle(p);
-    cv.style.cursor = h ? "nwse-resize" : (hitBox(p) >= 0 ? "move" : "crosshair");
+    cv.style.cursor = (e.altKey || e.shiftKey) ? "copy"
+      : (h ? "nwse-resize" : (hitBox(p) >= 0 ? "move" : "crosshair"));
     return;
   }
   if (drag.type === "new") {
@@ -703,7 +712,7 @@ $("btnSeal").onclick = async () => {
 function renderHelp() {
   $("helpFlowBody").innerHTML =
     "<ol><li><b>看图找缺陷</b> —— 640px 灰度硅片图,缺陷可能是线痕、崩边、小点、大片裂纹等;</li>" +
-    "<li><b>画框</b> —— 在缺陷上按住拖拽;点框选中后可拖动/四角缩放/右键或 Delete 删除;</li>" +
+    "<li><b>画框</b> —— 在缺陷上按住拖拽;点框选中后可拖动/四角缩放/右键或 Delete 删除;<b>小缺陷被大框盖住时,按住 <kbd>Alt</kbd>(或 <kbd>Shift</kbd>)拖拽即可在框内强制新建</b>;</li>" +
     "<li><b>选类别</b> —— 右侧点按钮或按快捷键(<kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>);选中框后按类别键可改它的类;</li>" +
     "<li><b>拿不准</b> —— 看参照样例和悬停判定要点;纯无缺陷的图勾「本图无缺陷」或按 <kbd>N</kbd>;</li>" +
     "<li><b>提交</b> —— <kbd>Enter</kbd> 或点提交;之后图进盲审流程,分歧自动加第三人。</li></ol>";
@@ -752,6 +761,7 @@ function renderHelp() {
   $("helpFaq").innerHTML =
     '<div class="faq-item"><b>标错了怎么办?</b> 定稿前:在「回看改判」里重新提交即可(留痕,不改历史);整笔撤销找组长在导出的留痕表里看,或重新提交一份正确的——投票只看最新有效标注。</div>' +
     '<div class="faq-item"><b>两人标的框差几个像素算分歧吗?</b> 不算。框数相同、同码框位置重叠足够大(IoU≥0.6)即视为一致,自动定稿。</div>' +
+    '<div class="faq-item"><b>几个缺陷挤在一起,大框里面画不了小框?</b> 按住 <kbd>Alt</kbd>(或 <kbd>Shift</kbd>)再拖拽,会无视已有框、直接新建;建议先小后大或配合该快捷键。松开前拖出画布也没关系,坐标会自动收敛到图内。</div>' +
     '<div class="faq-item"><b>平票怎么办?</b> 平票不自动定稿——数据准确性优先。群里讨论后,在盲审面板再点另一份「投这份」即可改票(覆盖原票),≥3 票且严格过半即定稿;对已定稿结果不满,随时「我有异议」重开。</div>' +
     '<div class="faq-item"><b>令牌失效?</b> 浏览器保存 7 天,过期回登录页重贴一次即可;令牌本身永久有效。</div>' +
     '<div class="faq-item"><b>图加载慢?</b> 每张 640px 灰度 png 仅几十 KB;若网络抖动,点「刷新队列」重进。</div>';
