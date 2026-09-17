@@ -203,7 +203,7 @@ function renderRefs(code) {
       + '<span class="hint inline">第 ' + (page + 1) + " / " + pages + " 页 · 共 " + list.length + " 张</span>"
       + '<button class="btn" id="refNext">›</button></div>'
     : "";
-  box.innerHTML = nav + '<div id="refPageBox"></div>';
+  box.innerHTML = nav + '<div id="refPageBox" class="ref-grid"></div>';
   const holder = $("refPageBox");
   list.slice(page * per, page * per + per).forEach((r) => {
     const item = document.createElement("div");

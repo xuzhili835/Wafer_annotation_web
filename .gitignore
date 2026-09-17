@@ -10,3 +10,5 @@ __pycache__/
 server.log
 .shots/
 .playwright-cli/
+
+tmp_ref/
