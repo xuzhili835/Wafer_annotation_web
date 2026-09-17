@@ -156,11 +156,20 @@ def try_settle(conn, stem: str) -> dict:
     """定稿引擎(幂等):候选按一致性聚类;
     - 全一致 → 自动定稿;
     - 最大组 > 半数 → 事实多数,自动定稿(取组内最早提交);
-    - 否则(平票/分裂)看盲投:组得票 = 组内成员被投和;≥3 票且最高组唯一 → 定稿;
-      4 票后仍并列 → 兜底取最早提交的组。"""
+    - 否则(平票/分裂)看盲投(只数仍指向有效候选的票):≥3 票且最高组唯一 → 定稿;
+      满 4 票仍并列 → 兜底取并列各组中最早提交的一份。3 票并列继续等票。"""
     img = conn.execute("SELECT final_id FROM images WHERE stem=?", (stem,)).fetchone()
-    if not img or img["final_id"]:
-        return {"final_id": img["final_id"] if img else None}
+    if not img:
+        return {"final_id": None}
+    if img["final_id"]:
+        # 防幽灵定稿:final 指向的标注已被撤销/不存在时摘牌重裁
+        alive = conn.execute("SELECT revoked FROM annotations WHERE id=?",
+                             (img["final_id"],)).fetchone()
+        if alive is None or alive["revoked"]:
+            conn.execute("UPDATE images SET final_id=NULL WHERE stem=?", (stem,))
+            conn.commit()
+        else:
+            return {"final_id": img["final_id"]}
     cands = _candidates(conn, stem)
     if len(cands) < 2:
         return {"final_id": None}
@@ -181,20 +190,24 @@ def try_settle(conn, stem: str) -> dict:
         final_id = min(m["id"] for m in groups[0])
     else:
         round_no = current_round(conn, stem)
-        votes = conn.execute(
+        rows = conn.execute(
             "SELECT reviewer, chosen_id FROM votes WHERE stem=? AND round=?",
             (stem, round_no)).fetchall()
         id2group = {m["id"]: gi for gi, g in enumerate(groups) for m in g}
-        tally = Counter(id2group[v["chosen_id"]] for v in votes
-                        if v["chosen_id"] in id2group)
-        if len(votes) < 3:
-            return {"final_id": None, "conflict": True, "votes": len(votes)}
-        top = max(tally.values()) if tally else 0
+        votes = [v for v in rows if v["chosen_id"] in id2group]  # 悬空票(指向已撤销候选)不计
+        n = len(votes)
+        if n < 3:
+            return {"final_id": None, "conflict": True, "votes": len(rows)}
+        tally = Counter(id2group[v["chosen_id"]] for v in votes)
+        top = max(tally.values())
         tops = [gi for gi, c in tally.items() if c == top]
-        if len(tops) == 1 and (len(votes) >= 4 or top > len(votes) / 2):
+        if len(tops) == 1 and (top > n / 2 or n >= 4):
             final_id = min(m["id"] for m in groups[tops[0]])
+        elif n >= 4:
+            # 兜底:并列各组中最早提交的一份(对齐启动文档口径)
+            final_id = min(m["id"] for gi in tops for m in groups[gi])
         else:
-            final_id = min(m["id"] for m in groups[tops[0]])  # 兜底:并列取最早提交
+            return {"final_id": None, "conflict": True, "votes": len(rows)}
     conn.execute("UPDATE images SET final_id=? WHERE stem=?", (final_id, stem))
     conn.commit()
     return {"final_id": final_id}
@@ -353,9 +366,15 @@ def submit(body: SubmitBody, user: str = Depends(current_user)):
             raise HTTPException(404, "没有这张图")
         boxes = _validate(body.boxes, body.is_empty, img["w"], img["h"])
         # 同人同图只保留最新一份有效标注(旧份置 revoked,留痕保留)
+        old_ids = {r["id"] for r in conn.execute(
+            "SELECT id FROM annotations WHERE stem=? AND annotator=? AND revoked=0",
+            (body.stem, user)).fetchall()}
         conn.execute(
             "UPDATE annotations SET revoked=1 WHERE stem=? AND annotator=? AND revoked=0",
             (body.stem, user))
+        if img["final_id"] and img["final_id"] in old_ids:
+            # 被替换的正是当前定稿 → 摘牌,交给 try_settle 重新裁决(防幽灵定稿)
+            conn.execute("UPDATE images SET final_id=NULL WHERE stem=?", (body.stem,))
         conn.execute(
             "INSERT INTO annotations(stem,annotator,boxes_json,is_empty) VALUES(?,?,?,?)",
             (body.stem, user, json.dumps(boxes), int(body.is_empty)))
@@ -396,9 +415,11 @@ def review(stem: str, user: str = Depends(current_user)):
         revealed = bool(img["final_id"])
         anon = {c["id"]: ANON_NAMES[i] for i, c in enumerate(cands)}
         round_no = current_round(conn, stem)
-        votes = conn.execute(
+        active_ids = {c["id"] for c in cands}
+        all_votes = conn.execute(
             "SELECT reviewer, chosen_id FROM votes WHERE stem=? AND round=?", (stem, round_no)).fetchall()
-        tally = Counter(v["chosen_id"] for v in votes if v["chosen_id"] in {c["id"] for c in cands})
+        votes = [v for v in all_votes if v["chosen_id"] in active_ids]  # 悬空票不计入票数
+        tally = Counter(v["chosen_id"] for v in votes)
         my_vote = next((v["chosen_id"] for v in votes if v["reviewer"] == user), None)
         disputes = conn.execute(
             "SELECT raised_by, reason, created_at FROM disputes WHERE stem=? ORDER BY id DESC",

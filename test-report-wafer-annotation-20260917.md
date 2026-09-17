@@ -91,3 +91,22 @@
 - 服务以最新代码(含本轮零产品改动)在 127.0.0.1:8100 保持运行,干净空库。
 - pytest 临时产物在 `C:\Users\legion\AppData\Local\Temp\pytest-of-legion\`(每轮 <1MB,C 盘间接
   占用,可随时整目录删除);探针脚本在 `D:\Desktop\Wafer_annotation_web\.shots\`(已 gitignore)。
+
+---
+
+## 修复记录(2026-09-17 上午,经用户授权进入修复模式)
+
+- **P1-1 已修**:`submit` 在 latest-wins 撤旧份时,若旧份正是当前 final → 先摘牌再重裁;
+  `try_settle` 开头增加自愈(final 指向已撤销标注时摘牌)。回归钉:
+  `test_resubmit_conflict_after_final_no_ghost`(冲突路径)、
+  `test_resubmit_final_author_still_agree_refinal`(仍一致路径)。
+- **P1-2 已修**:票决重写——≥3 票且最高组唯一(或过半)才定;满 4 票仍并列才兜底,
+  兜底取并列各组中最早提交的一份;3 票并列继续等票。回归钉:`test_tie_of_three_waits_for_4th_vote`。
+- **P1-3 已修**:try_settle 与 review 的票数统一只数"仍指向有效候选"的票,悬空票不计,
+  IndexError 路径消除。回归钉:`test_dangling_votes_excluded_from_count`。
+- **更正一处审查结论**:原「已验证正确」一节写"XML 仅非空定稿图入包"为**空转断言**(当轮无空图
+  定稿,未真正覆盖)。实际规格:`export.py` 对所有定稿图出 XML,空图定稿导出 0 object 的
+  annotation(即负样本),与 labels_voted.csv 的 `empty` 标记口径一致。已在
+  `test_voc_xml_matches_final_set` 中钉死该语义;训练侧 `wafer.prepare` 接入时需容忍 0-object XML。
+- 修复后回归:pytest 24/24(本地 Windows ×6 连跑)+ GitHub Actions Ubuntu 全绿;18 项 API 探针
+  全绿;幽灵定稿原探针复跑确认三口径一致。

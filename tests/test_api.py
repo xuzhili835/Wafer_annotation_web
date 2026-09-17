@@ -164,7 +164,7 @@ def test_revoke_own_only(client):
     assert r.status_code in (403, 404)
     conn = db_mod.connect()
     try:
-        mine = conn.execute("SELECT id FROM annotations WHERE annotator='cmx' LIMIT 1").fetchone()
+        mine = conn.execute("SELECT id FROM annotations WHERE annotator='cmx' ORDER BY id LIMIT 1").fetchone()
     finally:
         conn.close()
     r = client.post(f"/api/revoke/{mine['id']}", headers=H("zzq"))
@@ -325,6 +325,9 @@ def test_annotations_csv_keeps_revoked_rows(client):
 
 
 def test_voc_xml_matches_final_set(client):
+    # 先把 img_01(三组分歧)以"两张空图一致"的事实多数收口成空图定稿,保证空图分支非空转
+    submit(client, "cmx", "img_01", [], empty=True)
+    submit(client, "hce", "img_01", [], empty=True)
     zr = client.get("/api/export/voc_xml.zip", headers=H("cmx"))
     zf = zipfile.ZipFile(io.BytesIO(zr.content))
     xmls = set(zf.namelist())
@@ -336,9 +339,115 @@ def test_voc_xml_matches_final_set(client):
     finally:
         conn.close()
     assert rows
+    empty_seen = False
     for r in rows:
         present = (r["stem"] + ".xml") in xmls
+        assert present, f"定稿图 {r['stem']} 必须在 XML 包内(含空图=负样本)"
         if r["is_empty"]:
-            assert not present, "空图定稿不得入 XML 包"
-        else:
-            assert present, "非空定稿图必须在 XML 包内"
+            empty_seen = True
+            assert zf.read(r["stem"] + ".xml").decode().count("<object>") == 0,                 "空图定稿的 XML 应为 0 object(负样本)"
+    assert empty_seen, "本用例必须覆盖到空图定稿分支"
+    voted = client.get("/api/export/labels_voted.csv", headers=H("cmx")).text
+    row = [l for l in voted.splitlines() if l.startswith("img_01,")][0]
+    assert ",empty," in row, "csv 侧同一张图必须标 empty —— 两种导出口径一致"
+
+
+# ---------- 修复回归钉 2026-09-17(P1-1 幽灵定稿 / P1-2 兜底语义 / P1-3 悬空票) ----------
+
+def test_resubmit_conflict_after_final_no_ghost(client):
+    """P1-1 冲突路径:定稿作者改判成不同框 → 摘牌重裁,三导出同口径,无幽灵。"""
+    stem = "img_02"  # 现状:票决 2:1 定稿到 cmx 的 KD(test_vote_settlement_and_tie)
+    conn = db_mod.connect()
+    try:
+        old_final = conn.execute("SELECT final_id FROM images WHERE stem=?", (stem,)).fetchone()["final_id"]
+    finally:
+        conn.close()
+    assert old_final, "前置:img_02 应已定稿"
+    r = submit(client, "cmx", stem, [B("KD", 55, 55, 63, 63)])  # final 作者改判为远处的 KD
+    assert not r.get("final_id"), "改判后进入冲突,不得沿用旧定稿"
+    rv = client.get("/api/review/" + stem, headers=H("hce")).json()
+    codes = sorted(c["boxes"][0]["code"] for c in rv["candidates"] if c["boxes"])
+    assert not rv["final"] and len(rv["candidates"]) == 4 and codes == ["HS", "KD", "KD", "KD"],         "改判后 4 份候选(HS + 3 组 KD),不得沿用旧定稿"
+    conn = db_mod.connect()
+    try:
+        fid = conn.execute("SELECT final_id FROM images WHERE stem=?", (stem,)).fetchone()["final_id"]
+    finally:
+        conn.close()
+    assert fid is None, "不得残留幽灵 final_id"
+    voted = client.get("/api/export/labels_voted.csv", headers=H("hce")).text
+    row = [l for l in voted.splitlines() if l.startswith(stem + ",")][0]
+    assert ",pending," in row, "csv 必须与库内状态一致(未定稿=pending)"
+    zr = client.get("/api/export/voc_xml.zip", headers=H("hce"))
+    assert (stem + ".xml") not in zr.text, "冲突图不得残留在 XML 包"
+
+
+def test_resubmit_final_author_still_agree_refinal(client):
+    """P1-1 一致路径:定稿作者改判但仍与他人一致 → 摘牌后自动重新定稿到有效标注。"""
+    stem = "img_00"  # 现状:仅 hce 的 X 单份(final 已被 revoke 用例摘除)
+    submit(client, "cmx", stem, [B("X", 12, 11, 61, 69)])  # 与 hce 现份一致 → 自动定稿
+    conn = db_mod.connect()
+    try:
+        img = conn.execute("SELECT final_id FROM images WHERE stem=?", (stem,)).fetchone()
+        hce_ann = conn.execute(
+            "SELECT id FROM annotations WHERE stem=? AND annotator='hce' AND revoked=0", (stem,)).fetchone()
+    finally:
+        conn.close()
+    assert img["final_id"] == hce_ann["id"], "一致定稿应取最早提交的 hce 份"
+    r = submit(client, "hce", stem, [B("X", 13, 10, 62, 68)])  # final 作者(hce)改判,仍与 cmx 份一致
+    assert r.get("final_id"), "改判后仍一致 → 自动重新定稿"
+    conn = db_mod.connect()
+    try:
+        fid = conn.execute("SELECT final_id FROM images WHERE stem=?", (stem,)).fetchone()["final_id"]
+        revoked = conn.execute("SELECT revoked FROM annotations WHERE id=?", (fid,)).fetchone()["revoked"]
+    finally:
+        conn.close()
+    assert revoked == 0, "final 必须指向有效标注(不得是幽灵)"
+    rv = client.get("/api/review/" + stem, headers=H("hce")).json()
+    assert rv["final"] and all(c["annotator"] for c in rv["candidates"])
+
+
+def test_tie_of_three_waits_for_4th_vote(client):
+    """P1-2:3 票 1:1:1 不得兜底定稿,满 4 票仍并列才取最早提交。"""
+    stem = "img_05"  # 现状:仅 cmx 的空图份
+    submit(client, "hce", stem, [B("X", 5, 5, 20, 20)])
+    submit(client, "zj", stem, [B("HS", 30, 30, 50, 50)])
+    submit(client, "zzq", stem, [B("BX", 40, 10, 55, 25)])
+    rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
+    empty_id = next(c["id"] for c in rv["candidates"] if c["is_empty"])
+    x_id = next(c["id"] for c in rv["candidates"] if c["boxes"] and c["boxes"][0]["code"] == "X")
+    hs_id = next(c["id"] for c in rv["candidates"] if c["boxes"] and c["boxes"][0]["code"] == "HS")
+    bx_id = next(c["id"] for c in rv["candidates"] if c["boxes"] and c["boxes"][0]["code"] == "BX")
+    client.post("/api/vote", json={"stem": stem, "chosen_id": empty_id}, headers=H("cmx"))
+    client.post("/api/vote", json={"stem": stem, "chosen_id": x_id}, headers=H("hce"))
+    client.post("/api/vote", json={"stem": stem, "chosen_id": hs_id}, headers=H("zj"))
+    rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
+    assert not rv["final"], "3 票并列必须继续等票,不得提前兜底"
+    r = client.post("/api/vote", json={"stem": stem, "chosen_id": bx_id}, headers=H("zzq"))
+    assert r.json().get("final_id") == empty_id, "4 票并列 → 兜底取最早提交(空图份最早)"
+
+
+def test_dangling_votes_excluded_from_count(client):
+    """P1-3:候选被撤后其选票悬空,不计入票数,也不再触发定稿/500。"""
+    stem = "img_05"  # 接上:final=cmx 空图份,第 1 轮已 4 票
+    d = client.post("/api/dispute", json={"stem": stem, "reason": "四种答案差太多,重投一轮"},
+                    headers=H("zzq"))
+    assert d.status_code == 200 and d.json()["round"] == 2
+    rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
+    x_id = next(c["id"] for c in rv["candidates"] if c["boxes"] and c["boxes"][0]["code"] == "X")
+    hs_id = next(c["id"] for c in rv["candidates"] if c["boxes"] and c["boxes"][0]["code"] == "HS")
+    empty_id = next(c["id"] for c in rv["candidates"] if c["is_empty"])
+    client.post("/api/vote", json={"stem": stem, "chosen_id": empty_id}, headers=H("cmx"))
+    client.post("/api/vote", json={"stem": stem, "chosen_id": x_id}, headers=H("hce"))
+    client.post("/api/vote", json={"stem": stem, "chosen_id": hs_id}, headers=H("zj"))
+    rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
+    assert not rv["final"] and rv["votes"] == 3, "第 2 轮 3 票并列,继续等"
+    # cmx 撤回自己的空图份(=其选票悬空)
+    r = client.post(f"/api/revoke/{empty_id}", headers=H("cmx"))
+    assert r.status_code == 200
+    rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
+    assert rv["votes"] == 2, "悬空票不计入票数"
+    assert not rv["final"], "有效票不足 3 → 不得定稿,更不得 500"
+    # 第三人与 hce 的 X 一致 → 事实多数收口
+    submit(client, "zzq", stem, [B("X", 6, 6, 21, 21)])
+    rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
+    assert rv["final"], "X 组 2/3 事实多数 → 定稿"
