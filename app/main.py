@@ -577,6 +577,8 @@ def review(stem: str, user: str = Depends(current_user)):
         return {"stem": stem, "final": bool(img["final_id"]), "revealed": revealed,
                 "candidates": out_cands, "tally": dict(tally), "votes": len(votes),
                 "abstains": abstains, "my_vote": my_vote, "round": round_no,
+                "final_id": img["final_id"] if revealed else None,
+                "via": _settle_via(conn, stem, img["final_id"], round_no) if revealed else None,
                 "disputes": [dict(d) for d in disputes]}
     finally:
         conn.close()
@@ -648,8 +650,18 @@ def arbitration(scope: str = "open", user: str = Depends(current_user)):
                     continue
                 rnd = conn.execute("SELECT COALESCE(MAX(round),1) r FROM votes WHERE stem=?",
                                    (r["stem"],)).fetchone()["r"]
+                # 与我相关(前端"与我有关/我的被否"筛选、标签):ann*=我的标注, vote*=我的票
+                my_anns = {c["id"] for c in _candidates(conn, r["stem"]) if c["annotator"] == user}
+                mv = conn.execute(
+                    "SELECT chosen_id FROM votes WHERE stem=? AND reviewer=? AND round=?",
+                    (r["stem"], user, rnd)).fetchone()
+                my_choice = mv["chosen_id"] if mv else None
                 out.append({"stem": r["stem"], "round": rnd,
-                            "via": _settle_via(conn, r["stem"], r["final_id"], rnd)})
+                            "via": _settle_via(conn, r["stem"], r["final_id"], rnd),
+                            "ann": bool(my_anns),
+                            "ann_final": r["final_id"] in my_anns,
+                            "vote": my_choice is not None and my_choice != -1,
+                            "vote_final": my_choice == r["final_id"]})
                 continue
             if r["final_id"]:
                 continue
@@ -659,7 +671,8 @@ def arbitration(scope: str = "open", user: str = Depends(current_user)):
                     "SELECT chosen_id FROM votes WHERE stem=? AND reviewer=? AND round=?",
                     (r["stem"], user, current_round(conn, r["stem"]))).fetchone()
                 out.append({"stem": r["stem"], "cands": len(cands),
-                            "my": myv["chosen_id"] if myv else None})
+                            "my": myv["chosen_id"] if myv else None,
+                            "involved": any(c["annotator"] == user for c in cands)})
         # 投票中(≥3 份)排最前:离定稿最近,优先清
         out.sort(key=lambda o: (-o.get("cands", 0), o["stem"]))
         return {"list": out}

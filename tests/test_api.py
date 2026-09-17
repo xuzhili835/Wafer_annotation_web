@@ -122,6 +122,8 @@ def test_two_agree_auto_final(client):
     assert not r.get("final_id")
     r = submit(client, "hce", "img_00", [B("X", 12, 11, 61, 69)])  # IoU 很高 → 一致
     assert r.get("final_id")
+    rv = client.get("/api/review/img_00", headers=H("cmx")).json()
+    assert rv["via"] == "unanimous" and rv["final_id"] == r["final_id"]
 
 
 def test_arbitration_final_scope(client):
@@ -140,6 +142,8 @@ def test_conflict_then_third_majority(client):
     # 第三人 zj 与 cmx 一致 → 事实多数(2/3)自动定稿
     r = submit(client, "zj", "img_01", [B("BX", 6, 6, 41, 40)])
     assert r.get("final_id")
+    rv = client.get("/api/review/img_01", headers=H("cmx")).json()
+    assert rv["via"] == "majority", "第三人补标 2/3 一致 = 多数一致定稿(非投票)"
 
 
 def test_vote_settlement_and_tie(client):
@@ -166,6 +170,7 @@ def test_vote_settlement_and_tie(client):
     rv = client.get("/api/review/" + stem, headers=H("zj")).json()
     assert rv["final"], "3 票 2:1 多数 → 定稿"
     assert rv["my_vote"] == hs_id
+    assert rv["via"] == "vote" and rv["final_id"] == kd_a, "投票定稿,final 指向 kd_a"
     # 定稿后解锁真名
     assert any(c["annotator"] for c in rv["candidates"])
 
@@ -582,11 +587,13 @@ def test_abstain_vote(client):
     assert r.status_code == 200 and not r.json().get("final_id")
     rv = client.get("/api/review/" + stem, headers=H("zj")).json()
     assert rv["abstains"] == 1 and rv["my_vote"] == -1 and rv["votes"] == 0
-    # 待决列表:zj 视角 my=-1(已表态),他人视角 my=None(待表态)
+    # 待决列表:zj 视角 my=-1(已表态),他人视角 my=None(待表态);involved 标记是否我标的
     arb = client.get("/api/arbitration", headers=H("zj")).json()["list"]
-    assert next(x for x in arb if x["stem"] == stem)["my"] == -1
+    o = next(x for x in arb if x["stem"] == stem)
+    assert o["my"] == -1 and o["involved"] is False, "zj 没标注这张图 → involved=False"
     arb2 = client.get("/api/arbitration", headers=H("cmx")).json()["list"]
-    assert next(x for x in arb2 if x["stem"] == stem)["my"] is None
+    o2 = next(x for x in arb2 if x["stem"] == stem)
+    assert o2["my"] is None and o2["involved"] is True, "cmx 标过 → involved=True"
     # 弃权后补 3 实票:2:1 → 定稿(弃权不阻塞),abstains 保持留痕
     rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
     hb = next(c["id"] for c in rv["candidates"] if c["boxes"][0]["code"] == "HB")
@@ -595,7 +602,10 @@ def test_abstain_vote(client):
     rv = client.get("/api/review/" + stem, headers=H("zj")).json()
     assert rv["final"] and rv["abstains"] == 1, "3 实票定稿,弃权仅留痕"
     fin = client.get("/api/arbitration?scope=final", headers=H("zj")).json()["list"]
-    assert next(x for x in fin if x["stem"] == stem)["via"] == "vote"
+    o3 = next(x for x in fin if x["stem"] == stem)
+    assert o3["via"] == "vote"
+    assert o3["ann"] is False and o3["ann_final"] is False, "zj 没参与标注"
+    assert o3["vote"] is False, "zj 只弃权,不算投过票"
 
 
 def test_settle_via_unanimous_and_majority(client):
@@ -611,4 +621,9 @@ def test_settle_via_unanimous_and_majority(client):
     r = submit(client, "zj", "img_08", [B("DQK", 12, 11, 50, 50)])
     assert r.get("final_id")
     fin = client.get("/api/arbitration?scope=final", headers=H("cmx")).json()["list"]
-    assert next(x for x in fin if x["stem"] == "img_08")["via"] == "majority"
+    o = next(x for x in fin if x["stem"] == "img_08")
+    assert o["via"] == "majority"
+    assert o["ann"] and o["ann_final"], "cmx 的标注即定稿 → 我的✓"
+    fin2 = client.get("/api/arbitration?scope=final", headers=H("hce")).json()["list"]
+    o2 = next(x for x in fin2 if x["stem"] == "img_08")
+    assert o2["ann"] and not o2["ann_final"] and not o2["vote"], "hce 被否且没投过票"

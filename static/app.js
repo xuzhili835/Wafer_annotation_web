@@ -133,7 +133,7 @@ $("nav").addEventListener("click", async (e) => {
   else stopProgressPolling();
   if (b.dataset.view === "annotate") startTopPolling();
   else stopTopPolling();
-  if (b.dataset.view === "review") loadArb();
+  if (b.dataset.view === "review") { clearCmtBadge(); loadArb(); }
   if (b.dataset.view === "export") loadSeal();
 });
 
@@ -155,6 +155,7 @@ async function bootApp() {
     }).catch(() => {});
   await reloadQueue();
   startTopPolling();
+  startCommentStream();          // 全局评论推送:任何页面新评论都有轻提醒,点击直达那张图
   if (!localStorage.getItem("wafer_tut_done_v1")) startTut();
 }
 
@@ -574,40 +575,11 @@ async function loadArb() {
   const d = await api("/api/arbitration");
   const f = await api("/api/arbitration?scope=final");
   $("arbCount").textContent = d.list.length;
-  const arbItem = (o) => '<div class="arb-item" data-stem="' + esc(o.stem) + '"><code>' + esc(o.stem)
-    + "</code><span>" + (o.my != null
-      ? (o.my === -1 ? '<b class="tag-warn">已弃权</b> · ' : '<b class="tag-ok">已投</b> · ')
-      : "")
-    + (o.cands >= 3 ? o.cands + " 份标注 · 投票中 →" : "2 份分歧 · 待第三人 →") + "</span></div>";
-  const un = d.list.filter((o) => o.my == null);
-  const done = d.list.filter((o) => o.my != null);
-  $("arbList").innerHTML = d.list.length
-    ? (un.length ? '<div class="arb-group">待你表态(' + un.length + ')</div>' + un.map(arbItem).join("") : "")
-      + (done.length ? '<div class="arb-group">你已表态(改投/弃权可覆盖,讨论后随时改)</div>' + done.map(arbItem).join("") : "")
-    : '<p class="hint">没有分歧待决的图,稳!</p>';
-  $("arbList").onclick = (e) => {
-    const it = e.target.closest(".arb-item[data-stem]");
-    if (it) openReview(it.dataset.stem);
-  };
   $("finCount").textContent = f.list.length;
-  const VIA = { vote: "投票定稿", majority: "多数一致定稿", unanimous: "全部一致定稿" };
-  const finItem = (o) => '<div class="arb-item" data-fstem="' + esc(o.stem) + '"><code>' + esc(o.stem)
-    + "</code><span><b class=\"" + (o.via === "vote" ? "tag-warn" : "tag-ok") + "\">" + (VIA[o.via] || o.via)
-    + "</b>" + (o.round > 1 ? " · 第 " + o.round + " 轮" : "") + " · 查看/异议 →</span></div>";
-  const fv = { vote: f.list.filter((o) => o.via === "vote"),
-               majority: f.list.filter((o) => o.via === "majority"),
-               unanimous: f.list.filter((o) => o.via === "unanimous") };
-  $("finList").innerHTML = f.list.length
-    ? (["vote", "majority", "unanimous"].filter((k) => fv[k].length).map((k) =>
-        '<div class="arb-group">' + VIA[k] + "(" + fv[k].length + ")"
-        + (k === "vote" ? " · 人工裁决,优先复查" : k === "majority" ? " · 事实多数,没走投票" : " · 置信最高") + "</div>"
-        + fv[k].map(finItem).join("")).join(""))
-    : '<p class="hint">还没有定稿的图</p>';
-  $("finList").onclick = (e) => {
-    const it = e.target.closest(".arb-item[data-fstem]");
-    if (it) openReview(it.dataset.fstem);
-  };
   state.arbOpen = d.list;
+  state.arbFinal = f.list;
+  renderArbList();
+  renderFinList();
   const c = await api("/api/comments?limit=20");
   $("discCount").textContent = c.list.length + (c.list.length >= 20 ? "+" : "");
   $("discFeed").innerHTML = c.list.length
@@ -627,6 +599,86 @@ async function loadArb() {
     loadArb();
   }, 20000);
 }
+const ARB_FILTERS = [["todo", "待我表态"], ["mine", "我标注的"], ["all", "全部"]];
+const FIN_FILTERS = [["mine", "与我有关"], ["rej", "我的被否"], ["all", "全部"]];
+function chipRow(filters, cur, attr, cnt) {
+  return '<div class="arb-chips">' + filters.map(([k, label]) =>
+    '<button class="chip2' + (cur === k ? " on" : "") + '" data-' + attr + '="' + k + '">'
+    + label + " " + cnt[k] + "</button>").join("") + "</div>";
+}
+function renderArbList() {
+  const cur = state.arbFilter || "todo";
+  const all = state.arbOpen || [];
+  const cnt = {
+    todo: all.filter((o) => o.my == null).length,
+    mine: all.filter((o) => o.involved).length,
+    all: all.length,
+  };
+  let list = all;
+  if (cur === "todo") list = all.filter((o) => o.my == null);
+  else if (cur === "mine") list = all.filter((o) => o.involved);
+  list = list.slice().sort((a, b) => (b.involved - a.involved) || (b.cands - a.cands)
+    || a.stem.localeCompare(b.stem));
+  const un = list.filter((o) => o.my == null);
+  const done = list.filter((o) => o.my != null);
+  const arbItem = (o) => '<div class="arb-item" data-stem="' + esc(o.stem) + '"><code>' + esc(o.stem)
+    + "</code><span>" + (o.involved ? '<b class="tag-info">我标的</b> · ' : "")
+    + (o.my != null ? (o.my === -1 ? '<b class="tag-warn">已弃权</b> · ' : '<b class="tag-ok">已投</b> · ') : "")
+    + (o.cands >= 3 ? o.cands + " 份标注 · 投票中 →" : "2 份分歧 · 待第三人 →") + "</span></div>";
+  const body = (un.length || done.length)
+    ? (un.length ? '<div class="arb-group">待你表态(' + un.length + ')</div>' + un.map(arbItem).join("") : "")
+      + (done.length ? '<div class="arb-group">你已表态(改投/弃权可覆盖,讨论后随时改)</div>' + done.map(arbItem).join("") : "")
+    : '<p class="hint">' + (cur === "all" ? "没有分歧待决的图,稳!" : "这个筛选下没有图,点上面「全部」看看。") + "</p>";
+  $("arbList").innerHTML = all.length
+    ? chipRow(ARB_FILTERS, cur, "af", cnt) + body
+    : '<p class="hint">没有分歧待决的图,稳!</p>';
+  $("arbList").onclick = (e) => {
+    const ch = e.target.closest("[data-af]");
+    if (ch) { state.arbFilter = ch.dataset.af; renderArbList(); return; }
+    const it = e.target.closest(".arb-item[data-stem]");
+    if (it) openReview(it.dataset.stem);
+  };
+}
+function renderFinList() {
+  const cur = state.finFilter || "mine";
+  const all = state.arbFinal || [];
+  const cnt = {
+    mine: all.filter((o) => o.ann || o.vote).length,
+    rej: all.filter((o) => o.ann && !o.ann_final).length,
+    all: all.length,
+  };
+  let list = all;
+  if (cur === "mine") list = all.filter((o) => o.ann || o.vote);
+  else if (cur === "rej") list = all.filter((o) => o.ann && !o.ann_final);
+  const VIA = { vote: "投票定稿", majority: "多数一致定稿", unanimous: "全部一致定稿" };
+  const relTags = (o) => (o.ann_final ? '<b class="tag-ok">我的✓</b>'
+      : o.ann ? '<b class="tag-warn">我的✗</b>' : "")
+    + (o.vote ? (o.vote_final ? ' <b class="tag-ok">投✓</b>' : ' <b class="tag-warn">投✗</b>') : "");
+  const finItem = (o) => '<div class="arb-item" data-fstem="' + esc(o.stem) + '"><code>' + esc(o.stem)
+    + "</code><span>" + relTags(o)
+    + ' <b class="' + (o.via === "vote" ? "tag-warn" : "tag-ok") + '">' + (VIA[o.via] || o.via) + "</b>"
+    + (o.round > 1 ? " · 第 " + o.round + " 轮" : "") + " · 查看/异议 →</span></div>";
+  const fv = { vote: list.filter((o) => o.via === "vote"),
+               majority: list.filter((o) => o.via === "majority"),
+               unanimous: list.filter((o) => o.via === "unanimous") };
+  const legend = '<div class="arb-group" style="font-weight:400;letter-spacing:0">'
+    + "我的✓=定稿采纳了我的标注 · 我的✗=我的标注被否 · 投✓/投✗=我的票投中/被改</div>";
+  const body = list.length
+    ? (["vote", "majority", "unanimous"].filter((k) => fv[k].length).map((k) =>
+        '<div class="arb-group">' + VIA[k] + "(" + fv[k].length + ")"
+        + (k === "vote" ? " · 人工裁决,优先复查" : k === "majority" ? " · 事实多数,没走投票" : " · 置信最高") + "</div>"
+        + fv[k].map(finItem).join("")).join(""))
+    : '<p class="hint">' + (cur === "all" ? "还没有定稿的图" : "这个筛选下没有图,点上面「全部」看全部定稿。") + "</p>";
+  $("finList").innerHTML = all.length
+    ? chipRow(FIN_FILTERS, cur, "ff", cnt) + legend + body
+    : '<p class="hint">还没有定稿的图</p>';
+  $("finList").onclick = (e) => {
+    const ch = e.target.closest("[data-ff]");
+    if (ch) { state.finFilter = ch.dataset.ff; renderFinList(); return; }
+    const it = e.target.closest(".arb-item[data-fstem]");
+    if (it) openReview(it.dataset.fstem);
+  };
+}
 function switchArbTab(t) {
   state.arbTab = t;
   $("arbList").classList.toggle("hidden", t !== "open");
@@ -645,18 +697,58 @@ $("tabOpen").onclick = () => switchArbTab("open");
 $("tabFin").onclick = () => switchArbTab("fin");
 $("tabDisc").onclick = () => switchArbTab("disc");
 function startCommentStream() {
-  // SSE 实时:任何人发新评论,服务端 2 秒内推信号 → 立即重载当前面板讨论与讨论流。
+  // SSE 实时:任何人发新评论,服务端 2 秒内推信号。全局启动(登录后即连),
+  // 无论在标注/进度/审阅哪一页都只弹轻提醒(右下角小条 + 导航角标),不抢焦点不挡操作。
   // 断线由 EventSource 自动重连;15s 轮询继续作兜底,两者叠加无害(渲染幂等)。
   if (state.es) return;
   try {
     const es = new EventSource("/api/comments/stream");
-    es.onmessage = () => {
+    es.onmessage = (ev) => {
+      let m = null;
+      try { m = JSON.parse(ev.data).latest; } catch (e) { /* 心跳行无 JSON */ }
+      if (m && m.id) {
+        if (state.cmtSeenId == null) state.cmtSeenId = m.id;     // 连上时的基线:历史不提醒
+        else if (m.id > state.cmtSeenId) {
+          state.cmtSeenId = m.id;
+          if (m.author !== state.me) notifyComment(m);           // 自己发的不用提醒自己
+        }
+      }
+      if (document.getElementById("view-review").classList.contains("hidden")) return;
       renderRvComments(state.rvStem);
       if (state.arbTab === "disc") loadArb();
     };
     es.onerror = () => { /* 自动重连中 */ };
     state.es = es;
   } catch (e) { /* 无 EventSource 的环境由 15s 轮询兜底 */ }
+}
+function updateCmtBadge() {
+  const b = document.querySelector('#nav button[data-view="review"]');
+  if (!b) return;
+  const n = state.unseenCmt || 0;
+  let dot = b.querySelector(".nav-badge");
+  if (!n) { if (dot) dot.remove(); return; }
+  if (!dot) { dot = document.createElement("i"); dot.className = "nav-badge"; b.appendChild(dot); }
+  dot.textContent = n > 9 ? "9+" : String(n);
+}
+function clearCmtBadge() { state.unseenCmt = 0; updateCmtBadge(); }
+function notifyComment(m) {
+  state.unseenCmt = (state.unseenCmt || 0) + 1;
+  updateCmtBadge();
+  let t = document.getElementById("cmtToast");
+  if (!t) { t = document.createElement("div"); t.id = "cmtToast"; document.body.appendChild(t); }
+  const excerpt = m.text.length > 48 ? m.text.slice(0, 48) + "…" : m.text;
+  t.innerHTML = "<b>💬 " + esc(m.author) + "</b> 评论了 <code>" + esc(m.stem) + "</code>"
+    + "<span>" + esc(excerpt) + "</span>"
+    + "<i>" + (state.unseenCmt > 1 ? "未读 " + state.unseenCmt + " · " : "") + "点击查看 →</i>";
+  t.onclick = () => {
+    clearCmtBadge();
+    document.querySelector('#nav button[data-view="review"]').click();
+    openReview(m.stem);
+    t.classList.remove("show");
+  };
+  t.classList.add("show");
+  clearTimeout(state.cmtToastTimer);
+  state.cmtToastTimer = setTimeout(() => t.classList.remove("show"), 6000);  // 6 秒自动收起,不留干扰
 }
 async function renderRvComments(stem) {
   const box = $("rvComments");
@@ -694,9 +786,13 @@ async function openReview(stem) {
   document.querySelectorAll(".arb-item").forEach((x) =>
     x.classList.toggle("active", x.dataset.stem === stem));
   const d = await api("/api/review/" + stem);
+  const viaTxt = d.via === "vote" ? "投票定稿"
+    : d.via === "unanimous" ? "全一致定稿" : "多数一致定稿";
   $("rvTitle").innerHTML = "盲审面板 · <code>" + esc(stem) + "</code> " +
-    (d.final ? '<span class="pill ok">已定稿</span>' : '<span class="pill wip">未定稿 · 匿名中</span>') +
-    ' <span class="hint inline">第 ' + d.round + " 轮 · 已收 " + d.votes + " 票"
+    (d.final ? '<span class="pill ok">已定稿 · ' + viaTxt + "</span>"
+             : '<span class="pill wip">未定稿 · 匿名中</span>') +
+    ' <span class="hint inline">第 ' + d.round + " 轮 · "
+    + (d.final && d.via !== "vote" ? "未经投票,自动定稿" : "已收 " + d.votes + " 票")
     + (d.abstains ? " · " + d.abstains + " 人弃权" : "") + "</span>";
   const rc = $("rv"), g = rc.getContext("2d");
   g.clearRect(0, 0, 640, 640);
@@ -739,10 +835,15 @@ async function openReview(stem) {
         const cards = d.candidates.map((c, i) => {
           const color = CAND_COLORS[i % CAND_COLORS.length];
           const isMine = c.annotator === state.me;
-          return '<div class="cand-card' + (isMine ? " mine" : "") + (d.final && d.tally[c.id] ? " chosen" : "") + '">'
+          const chosen = d.final && c.id === d.final_id;
+          // 非投票定稿不显示票数(全一致/多数一致时"0 票"只会让人困惑),标出定稿的那份
+          const votesCell = !d.final || d.via === "vote"
+            ? "<b>" + (d.tally[c.id] || 0) + " 票</b>"
+            : (chosen ? '<b class="tag-ok">' + (d.via === "unanimous" ? "全一致定稿" : "多数一致定稿") + "</b>" : "");
+          return '<div class="cand-card' + (isMine ? " mine" : "") + (chosen ? " chosen" : "") + '">'
             + '<div class="row"><span class="anon" style="color:' + color + '">' + esc(c.anon)
             + (isMine ? "(你)" : "") + "</span><span>" + esc(boxSummary(c))
-            + "</span><b>" + (d.tally[c.id] || 0) + " 票</b></div>"
+            + "</span>" + votesCell + "</div>"
             + '<div class="row"><span class="meta">' + esc(c.submitted_at)
             + (c.annotator ? " · 真名:" + esc(c.annotator) : "") + "</span>"
             + (d.final ? "" : '<button class="btn" data-vote="' + c.id + '"' +
@@ -762,7 +863,12 @@ async function openReview(stem) {
           + (d.my_vote === -1 ? "已弃权 · 想改就点上面任意「投这份」覆盖" : "两份都拿不准?<b>弃权</b>(只记录我看过了,不计票、不算进定稿)")
           + "</button></div>";
         return focusBar + fixBtn + reasonHtml + cards + abstainBtn
-          + (d.final ? "" : '<p class="hint small">投票规则:<b>全员 4 人都能投,包括已标注的人</b>(匿名状态下凭判断选对的一份,坚持己见也是票);≥3 票且<b>严格过半</b>才定稿 —— 2 个人定不了任何图;<b>平票不自动定稿</b>:群里讨论后,再点另一份「投这份」即可覆盖你原来的票;<b>弃权只留痕不计票</b>,让组里知道这张图有人看过但没把握;定稿后仍可「我有异议」重开。</p>');
+          + (d.final
+            ? (d.via !== "vote" ? '<p class="hint small">这张<b>没有经过投票</b>:'
+                + (d.via === "unanimous" ? "所有标注一致,系统按规则直接定稿"
+                  : "第三人补标后与其中一方一致,凑成事实多数,系统自动定稿")
+                + '——所以候选上没有票数(或只有零星补投),不是没人管。有异议随时「我有异议」重开。</p>' : "")
+            : '<p class="hint small">投票规则:<b>全员 4 人都能投,包括已标注的人</b>(匿名状态下凭判断选对的一份,坚持己见也是票);≥3 票且<b>严格过半</b>才定稿 —— 2 个人定不了任何图;<b>平票不自动定稿</b>:群里讨论后,再点另一份「投这份」即可覆盖你原来的票;<b>弃权只留痕不计票</b>,让组里知道这张图有人看过但没把握;定稿后仍可「我有异议」重开。</p>');
       })()
     : '<p class="hint">这张图还没有任何有效标注</p>';
   $("rvCands").onclick = async (e) => {
@@ -891,7 +997,7 @@ function renderHelp() {
   $("helpFlowBody").innerHTML =
     "<ol><li><b>看图找缺陷</b> —— 640px 灰度硅片图,缺陷可能是线痕、崩边、小点、大片裂纹等;</li>" +
     "<li><b>画框</b> —— 在缺陷上按住拖拽;点框选中后可拖动/四角缩放/右键或 Delete 删除;<b>小缺陷被大框盖住时,按住 <kbd>Alt</kbd>(或 <kbd>Shift</kbd>)拖拽即可在框内强制新建</b>;</li>" +
-    "<li><b>选类别</b> —— 右侧点按钮或按快捷键(<kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>);选中框后按类别键可改它的类;</li>" +
+    "<li><b>选类别</b> —— 右侧<b>点按钮</b>即可,全程纯鼠标可完成;快捷键(<kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>)是可选提速,选中框后按类别键可直接改它的类;</li>" +
     "<li><b>拿不准</b> —— 看参照样例和悬停判定要点;纯无缺陷的图勾「本图无缺陷」或按 <kbd>N</kbd>;</li>" +
     "<li><b>提交</b> —— <kbd>Enter</kbd> 或点提交;之后图进盲审流程,分歧自动加第三人。</li></ol>";
   $("helpCoop").innerHTML =
@@ -913,8 +1019,19 @@ function renderHelp() {
     '<p class="hint small">中文名已由队友逐类看图 + 产线目录名确认(2026-09-17);若数据方官方对照有出入,以官方为准,届时只改一张表。</p>';
   const refs = $("helpRefs");
   refs.innerHTML = "";
+  state.refLibOpen = state.refLibOpen || {};
   m.codes.forEach((c) => {
-    ((state.refs || {})[c] || []).slice(0, 8).forEach((r) => {
+    const samples = (state.refs || {})[c] || [];
+    if (!samples.length) return;
+    const open = !!state.refLibOpen[c];
+    const sec = document.createElement("div");
+    sec.className = "reflib-sec";
+    sec.insertAdjacentHTML("beforeend", "<div class='reflib-head'><b>" + esc(c + " " + (m.names[c] || ""))
+      + '</b><span class="hint inline">' + samples.length + " 张</span>"
+      + '<button class="btn" data-refmore="' + esc(c) + '">' + (open ? "收起" : "展开全部") + "</button></div>");
+    const grid = document.createElement("div");
+    grid.className = "ref-grid big";
+    (open ? samples : samples.slice(0, 4)).forEach((r) => {
       const item = document.createElement("div");
       item.className = "ref-item";
       const cvh = document.createElement("canvas");
@@ -933,9 +1050,18 @@ function renderHelp() {
       const cap = document.createElement("div");
       cap.className = "cap"; cap.textContent = c + " · " + r.stem;
       item.appendChild(cap);
-      refs.appendChild(item);
+      grid.appendChild(item);
     });
+    sec.appendChild(grid);
+    refs.appendChild(sec);
   });
+  refs.onclick = (e) => {
+    const b = e.target.closest("[data-refmore]");
+    if (!b) return;
+    const c = b.dataset.refmore;
+    state.refLibOpen[c] = !state.refLibOpen[c];
+    renderHelp();
+  };
   $("helpFaq").innerHTML =
     '<div class="faq-item"><b>标错了怎么办?</b> 定稿前:在「回看改判」里重新提交即可(留痕,不改历史);整笔撤销找组长在导出的留痕表里看,或重新提交一份正确的——投票只看最新有效标注。</div>' +
     '<div class="faq-item"><b>两人标的框差几个像素算分歧吗?</b> 不算。框数相同、同码框位置重叠足够大(IoU≥0.6)即视为一致,自动定稿。</div>' +
@@ -951,7 +1077,7 @@ const TUT = [
   { t: "欢迎来到光伏硅片标注站", b: "我们要给 510 张硅片图<b>画框 + 选缺陷类别</b>。<ul><li>每张图会由 2 人独立标注</li><li>分歧自动加第三人盲审,多数票定稿</li><li>全程留痕,标错可改,别有压力</li></ul>跟着引导走一遍(约 1 分钟)。" },
   { t: "看图找缺陷", b: "左边深色区就是硅片图(640×640 灰度)。常见缺陷:<b>线痕</b>(细长线)、<b>崩边</b>(边缘缺损)、<b>隐裂</b>(大片贴边裂纹)、<b>小点斑</b>(孤立小点)。看不准就对照右侧「参照样例」。" },
   { t: "画框", b: "在缺陷上<b>按住鼠标拖拽</b>即画一个框。<ul><li>点框选中,拖动可移位</li><li>拖四角白点可缩放</li><li>右键点框 / 选中按 <kbd>Delete</kbd> 删除</li><li><kbd>Ctrl+Z</kbd> 撤销</li></ul>" },
-  { t: "选类别", b: "右侧 12 个类别按钮,<b>快捷键见角标</b>(<kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>)。<ul><li>先选类再画框;选中已有框后按类别键可改它的类</li><li>悬停按钮有判定要点</li><li>整图无缺陷:勾选「本图无缺陷」或按 <kbd>N</kbd>,很重要,别硬找框!</li></ul>" },
+  { t: "选类别", b: "右侧 12 个类别按钮,<b>点一下就选中,全程只用鼠标也完全够用</b>——快捷键(角标 <kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>)只是熟练后的提速选项,不用也不影响任何功能。<ul><li>先选类再画框</li><li>点框选中后,按类别键可快速改它的类(纯鼠标的话,右键删掉重画也一样)</li><li>悬停按钮有判定要点</li><li>整图无缺陷:勾选「本图无缺陷」或按 <kbd>N</kbd>,很重要,别硬找框!</li></ul>" },
   { t: "提交与改判", b: "画完点「提交本图」或按 <kbd>Enter</kbd>,<b>每画一笔自动存草稿</b>,崩了不怕。<ul><li>提交后图进盲审流程</li><li>「回看改判」可重新提交自己标过的未定稿图</li></ul>" },
   { t: "分歧怎么办", b: "两人不一致 → 自动加派第三人盲审 → 僵局全员投票、严格过半定稿;平票不自动定稿,群里协商改票;两份都拿不准可以<b>弃权</b>(只留痕「我看过了」,不计票、不算进定稿,之后可改投覆盖)。<b>定稿前所有人都匿名(甲乙丙丁)</b>,放平心态,你的判断有价值。有异议随时重审,无理由才不受理。" },
   { t: "开始吧!", b: "队列已按你的分配洗好牌,直接开标。规则细节在「帮助与方案」页随时可查。<br><br><b>记住:如实标,不猜目录,不看别人。</b>" },

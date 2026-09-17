@@ -171,3 +171,31 @@ main{padding:20px 24px 40px;min-width:0}
 .tag-ok,.tag-warn{font-size:10.5px;padding:1px 6px;border-radius:999px;border:1px solid transparent;font-weight:700;white-space:nowrap}
 .tag-ok{background:var(--pass-soft);color:var(--pass);border-color:#bbf0cd}
 .tag-warn{background:var(--review-soft);color:var(--review);border-color:#f6d9a8}
+
+/* 全局评论轻提醒:右下角小条,6 秒自收,不抢焦点不挡操作(点击直达那张图) */
+.cmt-toast{position:fixed;right:16px;bottom:16px;z-index:70;max-width:300px;background:#fff;
+  border:1px solid var(--line);border-left:4px solid var(--primary);border-radius:10px;
+  box-shadow:0 8px 24px rgba(11,18,32,.14);padding:10px 12px;font-size:12.5px;cursor:pointer;
+  display:flex;flex-direction:column;gap:3px;opacity:0;transform:translateY(8px);pointer-events:none;
+  transition:opacity .18s ease,transform .18s ease}
+.cmt-toast.show{opacity:1;transform:none;pointer-events:auto}
+.cmt-toast code{font-size:11px}
+.cmt-toast span{color:var(--muted)}
+.cmt-toast i{font-style:normal;color:var(--primary);font-weight:700;font-size:11.5px}
+/* 审阅导航未读角标 */
+.nav-badge{position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;border-radius:999px;
+  background:#dc2626;color:#fff;font-size:10px;font-weight:700;font-style:normal;
+  display:grid;place-items:center;padding:0 4px}
+#nav button{position:relative}
+/* 待决/已定稿列表筛选片 */
+.arb-chips{position:sticky;top:0;z-index:2;background:var(--bg,#f6f8fa);display:flex;gap:6px;
+  flex-wrap:wrap;align-items:center;padding:4px 0;margin-bottom:6px;border-bottom:1px solid var(--line)}
+.chip2{font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:999px;cursor:pointer;
+  border:1px solid var(--line);background:#fff;color:var(--muted)}
+.chip2.on{background:var(--primary);border-color:var(--primary);color:#fff}
+.tag-info{background:#e8f0fe;color:#1a56db;border-color:#c6dafc}
+.tag-info,.tag-ok,.tag-warn{font-size:10.5px;padding:1px 6px;border-radius:999px;border:1px solid transparent;font-weight:700;white-space:nowrap}
+/* 帮助页参照样例库:按类分组折叠 */
+.reflib-sec{grid-column:1/-1;margin-bottom:14px}
+.reflib-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.reflib-head b{font-size:13.5px;color:var(--title)}
