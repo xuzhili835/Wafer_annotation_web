@@ -35,8 +35,10 @@ CODE_NAMES: dict[str, str] = {
     "KD": "孔洞", "DQK": "大缺角", "HB": "黑斑", "XQK": "小缺角", "BYW": "油污",
     "KYW": "颗粒油污", "XHB": "线黑斑",
 }
-# 稀有码:照实标,暂不参与训练(训练侧再决定忽略/合并)
-RARE_CODES: frozenset[str] = frozenset({"BYW", "KYW", "XHB", "XQK"})
+# 稀有码:仅用于界面「稀有」角标,系统不丢弃任何标注;是否参与训练由训练侧按最终分布决定。
+# 2026-09-17 实测训练标注 167 框:XQK 占 23%(40 框)为最高频、XHB 占 9%,均移出稀有
+# (抽图与产线参照比对,形态一致,非误标);BYW 2% / KYW 0.6% 保持稀有。
+RARE_CODES: frozenset[str] = frozenset({"BYW", "KYW"})
 
 MEMBERS = ("cmx", "hce", "zj", "zzq")
 ANON_NAMES = ("甲", "乙", "丙", "丁")  # 盲审匿名代称(按候选提交先后固定映射)
