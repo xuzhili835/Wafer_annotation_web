@@ -448,7 +448,19 @@ def save_draft(body: SubmitBody, user: str = Depends(current_user)):
         img = conn.execute("SELECT w,h FROM images WHERE stem=?", (body.stem,)).fetchone()
         if not img:
             raise HTTPException(404, "没有这张图")
-        boxes = _validate(body.boxes, body.is_empty, img["w"], img["h"])
+        # 草稿宽松保存:坐标夹紧、静默丢弃未知码与拖拽中间态的过小框;
+        # 空框列表也照存(标注中删光框是正常状态)。严格校验只属于 submit。
+        boxes = []
+        for b in body.boxes:
+            code = str(b.code).strip().upper()
+            if code not in CODES:
+                continue
+            x0, x1 = sorted((max(0, min(img["w"], int(b.x0))), max(0, min(img["w"], int(b.x1)))))
+            y0, y1 = sorted((max(0, min(img["h"], int(b.y0))), max(0, min(img["h"], int(b.y1)))))
+            if x1 - x0 >= 2 and y1 - y0 >= 2:
+                boxes.append({"code": code, "x0": x0, "y0": y0, "x1": x1, "y1": y1})
+        if body.is_empty:
+            boxes = []
         conn.execute(
             "INSERT INTO drafts(stem,annotator,boxes_json) VALUES(?,?,?)"
             " ON CONFLICT(stem,annotator) DO UPDATE SET boxes_json=excluded.boxes_json,"

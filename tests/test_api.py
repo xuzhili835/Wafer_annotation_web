@@ -232,6 +232,25 @@ def test_reference_prod(client):
         conn.close()
 
 
+def test_draft_lenient(client):
+    # 草稿宽松:拖拽中间态(过小框)、未知码、空框列表都照存,不报 400
+    r = client.post("/api/draft", json={"stem": "img_04", "is_empty": False,
+                    "boxes": [B("X", 5, 5, 6, 6), B("XX", 0, 0, 9, 9)]}, headers=H("cmx"))
+    assert r.status_code == 200
+    assert client.post("/api/draft", json={"stem": "img_04", "boxes": [], "is_empty": False},
+                       headers=H("cmx")).status_code == 200
+    conn = db_mod.connect()
+    try:
+        row = conn.execute("SELECT boxes_json FROM drafts WHERE stem='img_04'").fetchone()
+    finally:
+        conn.close()
+    import json as _json
+    assert _json.loads(row["boxes_json"]) == [], "最后一次空框草稿应覆盖成功"
+    # submit 仍严格:过小框拒绝
+    assert client.post("/api/submit", json={"stem": "img_04",
+                       "boxes": [B("X", 5, 5, 6, 6)]}, headers=H("cmx")).status_code == 400
+
+
 def test_validation(client):
     r = client.post("/api/submit", json={"stem": "img_04", "boxes": [], "is_empty": False},
                     headers=H("cmx"))
