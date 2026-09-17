@@ -39,14 +39,19 @@ def _make_data(tmp_path, n=6, size=64):
     for i in range(n):
         Image.new("L", (size, size), color=i * 30 % 255).save(data / f"img_{i:02d}.png")
     # 产线参照样例(测试集,只读):绝不进 images 表
+    # X 目录的图带 2 个 HB 框 → 按框码组织时 HB 样例应能跨目录收集到且排最前
     for code in ("X", "HB"):
         d = data / "测试集" / code
         d.mkdir(parents=True)
         Image.new("L", (size, size), 99).save(d / f"ref_{code}.png")
+        extra = ('<object><name>HB</name><bndbox><xmin>30</xmin><ymin>30</ymin>'
+                 '<xmax>50</xmax><ymax>50</ymax></bndbox></object>'
+                 '<object><name>HB</name><bndbox><xmin>40</xmin><ymin>10</ymin>'
+                 '<xmax>55</xmax><ymax>25</ymax></bndbox></object>') if code == "X" else ""
         (d / f"ref_{code}.xml").write_text(
             f'<annotation><size><width>{size}</width><height>{size}</height></size>'
             f'<object><name>{code}</name><bndbox><xmin>1</xmin><ymin>2</ymin>'
-            f'<xmax>20</xmax><ymax>21</ymax></bndbox></object></annotation>',
+            f'<xmax>20</xmax><ymax>21</ymax></bndbox></object>{extra}</annotation>',
             encoding="utf-8")
     return data
 
@@ -215,6 +220,10 @@ def test_reference_prod(client):
     assert set(codes) == {"X", "HB"}
     x = codes["X"][0]
     assert x["boxes"][0]["code"] == "X" and x["url"].startswith("/api/ref_image/X/")
+    # 按框码组织:X 目录图里的 2 个 HB 框也应被 HB 类收集到(跨目录,排在-only-1-框的 HB 图前面)
+    hb = codes["HB"]
+    assert len(hb) == 2 and hb[0]["url"].startswith("/api/ref_image/X/")
+    assert sum(1 for b in hb[0]["boxes"] if b["code"] == "HB") == 2
     img = client.get(x["url"], headers=H("hce"))
     assert img.status_code == 200 and img.headers["content-type"].startswith("image/")
     # 路径穿越 / 非法目录名一律 404

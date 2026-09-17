@@ -310,44 +310,45 @@ def _ref_root():
 
 def _ref_data() -> dict:
     """解析测试集 VOC XML → {code: [{stem, url, boxes}]}(进程内缓存)。
-    每个子目录名 = 产线保证该图含该类缺陷;每类取该类框数最多的前 3 张。"""
+    按框码组织而非按目录:目录只代表主打缺陷,XHB/KYW/XQK 等少量伴生缺陷
+    藏在其他目录的图里,按目录分会漏。每类取"该类框数最多"的前 3 张。"""
     global _REF_CACHE
     if _REF_CACHE is not None:
         return _REF_CACHE
     import re
     import xml.etree.ElementTree as ET
+    from collections import Counter
     root = _ref_root()
-    per_dir: dict[str, list] = {}
+    by_code: dict[str, list] = {}
     if root.is_dir():
-        for code_dir in sorted(root.iterdir()):
-            if not code_dir.is_dir() or not re.fullmatch(r"[A-Z0-9]{1,8}", code_dir.name):
+        for xf in sorted(root.rglob("*.xml")):
+            if not re.fullmatch(r"[A-Z0-9]{1,8}", xf.parent.name):
                 continue
-            for xf in sorted(code_dir.glob("*.xml")):
-                try:
-                    rt = ET.parse(xf).getroot()
-                except Exception:
+            try:
+                rt = ET.parse(xf).getroot()
+            except Exception:
+                continue
+            boxes = []
+            for obj in rt.findall("object"):
+                name = (obj.findtext("name") or "").strip()
+                bb = obj.find("bndbox")
+                if name not in CODES or bb is None:
                     continue
-                boxes = []
-                for obj in rt.findall("object"):
-                    name = (obj.findtext("name") or "").strip()
-                    bb = obj.find("bndbox")
-                    if name not in CODES or bb is None:
-                        continue
-                    try:
-                        boxes.append({"code": name,
-                                      "x0": int(float(bb.findtext("xmin", 0))),
-                                      "y0": int(float(bb.findtext("ymin", 0))),
-                                      "x1": int(float(bb.findtext("xmax", 0))),
-                                      "y1": int(float(bb.findtext("ymax", 0)))})
-                    except (TypeError, ValueError):
-                        continue
-                if boxes:
-                    per_dir.setdefault(code_dir.name, []).append({
-                        "stem": xf.stem, "dir": code_dir.name,
-                        "n": sum(1 for b in boxes if b["code"] == code_dir.name),
-                        "boxes": boxes})
+                try:
+                    boxes.append({"code": name,
+                                  "x0": int(float(bb.findtext("xmin", 0))),
+                                  "y0": int(float(bb.findtext("ymin", 0))),
+                                  "x1": int(float(bb.findtext("xmax", 0))),
+                                  "y1": int(float(bb.findtext("ymax", 0)))})
+                except (TypeError, ValueError):
+                    continue
+            if not boxes:
+                continue
+            entry = {"stem": xf.stem, "dir": xf.parent.name, "boxes": boxes}
+            for code, n in Counter(b["code"] for b in boxes).items():
+                by_code.setdefault(code, []).append(dict(entry, n=n))
     _REF_CACHE = {}
-    for code, items in per_dir.items():
+    for code, items in by_code.items():
         items.sort(key=lambda r: (-r["n"], r["stem"]))
         _REF_CACHE[code] = [{"stem": r["stem"], "boxes": r["boxes"],
                              "url": f"/api/ref_image/{r['dir']}/{r['stem']}.png"}
