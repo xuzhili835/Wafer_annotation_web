@@ -400,6 +400,8 @@ function annMsg(text, cls) {
   el.className = "msg " + (cls || "err");
   el.textContent = text;
   el.classList.remove("hidden");
+  clearTimeout(state.msgTimer);
+  state.msgTimer = setTimeout(() => el.classList.add("hidden"), 8000);
 }
 function markDirty() {
   clearTimeout(state.dirtyTimer);
@@ -453,6 +455,8 @@ function stepQueue(delta) {
 }
 async function loadStem(stem, revise) {
   const seq = (state.loadSeq = (state.loadSeq || 0) + 1);   // 加载序号:连点/慢网时只认最新一次
+  clearTimeout(state.msgTimer);
+  $("annMsg").classList.add("hidden");                       // 换图后不残留上一张的提示
   state.stem = stem; state.reviseMode = !!revise;
   state.sel = -1; state.undoStack = []; state.loadedDraft = false;
   $("cvStem").textContent = stem + " · 图片加载中…" + (revise ? " · 回看改判" : "");
