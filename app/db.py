@@ -56,6 +56,14 @@ CREATE TABLE IF NOT EXISTS seals(
   voter TEXT PRIMARY KEY,
   voted_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+CREATE TABLE IF NOT EXISTS comments(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  stem TEXT NOT NULL,
+  author TEXT NOT NULL,
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_comments_stem ON comments(stem);
 """
 
 

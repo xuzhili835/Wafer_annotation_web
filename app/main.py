@@ -655,6 +655,47 @@ def seal(user: str = Depends(current_user)):
         conn.close()
 
 
+# ---------------- 图上讨论(纯沟通层,不参与定稿逻辑) ----------------
+class CommentBody(BaseModel):
+    stem: str
+    text: str
+
+
+@app.get("/api/comments")
+def comments_feed(limit: int = 30, stem: str = None, user: str = Depends(current_user)):
+    """stem 给定→该图评论(正序);否则→全库最新讨论流(倒序,跨图可见)。"""
+    conn = connect()
+    try:
+        if stem:
+            rows = conn.execute(
+                "SELECT id,stem,author,text,created_at FROM comments WHERE stem=? ORDER BY id",
+                (stem,)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id,stem,author,text,created_at FROM comments"
+                " ORDER BY id DESC LIMIT ?", (max(1, min(limit, 100)),)).fetchall()
+        return {"list": [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
+
+@app.post("/api/comments")
+def add_comment(body: CommentBody, user: str = Depends(current_user)):
+    text = body.text.strip()
+    if not 1 <= len(text) <= 500:
+        raise HTTPException(400, "评论需 1~500 字")
+    conn = connect()
+    try:
+        if not conn.execute("SELECT 1 FROM images WHERE stem=?", (body.stem,)).fetchone():
+            raise HTTPException(404, "没有这张图")
+        cur = conn.execute("INSERT INTO comments(stem,author,text) VALUES(?,?,?)",
+                           (body.stem, user, text))
+        conn.commit()
+        return {"ok": True, "id": cur.lastrowid}
+    finally:
+        conn.close()
+
+
 # ---------------- 进度与导出 ----------------
 @app.get("/api/progress")
 def progress(user: str = Depends(current_user)):

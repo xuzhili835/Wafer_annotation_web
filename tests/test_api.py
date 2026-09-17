@@ -541,3 +541,22 @@ def test_dangling_votes_excluded_from_count(client):
     submit(client, "zzq", stem, [B("X", 6, 6, 21, 21)])
     rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
     assert rv["final"], "X 组 2/3 事实多数 → 定稿"
+
+
+def test_comments(client):
+    """图上讨论:发/读/全局流/鉴权/校验。"""
+    assert client.post("/api/comments", json={"stem": "no_such", "text": "hi"},
+                       headers=H("cmx")).status_code == 404
+    assert client.post("/api/comments", json={"stem": "img_00", "text": "   "},
+                       headers=H("cmx")).status_code == 400
+    assert client.post("/api/comments", json={"stem": "img_00", "text": "这个框是不是偏了?"},
+                       headers=H("cmx")).json()["ok"]
+    assert client.post("/api/comments", json={"stem": "img_00", "text": "同意,重开吧"},
+                       headers=H("hce")).json()["ok"]
+    lst = client.get("/api/comments?stem=img_00", headers=H("hce")).json()["list"]
+    assert [c["author"] for c in lst] == ["cmx", "hce"], "单图评论按时间正序"
+    feed = client.get("/api/comments", headers=H("hce")).json()["list"]
+    assert feed[0]["stem"] == "img_00" and feed[0]["author"] == "hce", "全局流最新在前"
+    client.cookies.clear()
+    assert client.get("/api/comments").status_code == 401
+    assert client.post("/api/comments", json={"stem": "img_00", "text": "x"}).status_code == 401

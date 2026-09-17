@@ -579,21 +579,59 @@ async function loadArb() {
     const it = e.target.closest(".arb-item[data-fstem]");
     if (it) openReview(it.dataset.fstem);
   };
+  const c = await api("/api/comments?limit=20");
+  $("discCount").textContent = c.list.length + (c.list.length >= 20 ? "+" : "");
+  $("discFeed").innerHTML = c.list.length
+    ? c.list.map((o) => '<div class="arb-item" data-cstem="' + esc(o.stem) + '" style="flex-direction:column;align-items:flex-start;gap:2px">'
+        + "<b>" + esc(o.author) + "</b>@" + esc(o.stem) + "<span>" + esc(o.text) + "</span>"
+        + '<span class="hint inline">' + esc(o.created_at) + " · 点我去看这张图 →</span></div>").join("")
+    : '<p class="hint">还没有讨论。打开任意一张图,在面板下方「图上讨论」发言。</p>';
+  $("discFeed").onclick = (e) => {
+    const it = e.target.closest(".arb-item[data-cstem]");
+    if (it) openReview(it.dataset.cstem);
+  };
   switchArbTab(state.arbTab || "open");
 }
 function switchArbTab(t) {
   state.arbTab = t;
-  const open = t === "open";
-  $("arbList").classList.toggle("hidden", !open);
-  $("finList").classList.toggle("hidden", open);
-  $("tabOpen").classList.toggle("btn-primary", open);
-  $("tabFin").classList.toggle("btn-primary", !open);
-  $("arbTabHint").textContent = open
-    ? "分歧图盲审投票;对定稿结果有异议就切到「已定稿」,点开一键重开盲审。"
-    : "已定稿的图:点开查看定稿结果与真名;有异议点面板里「我有异议」一键重开盲审。";
+  $("arbList").classList.toggle("hidden", t !== "open");
+  $("finList").classList.toggle("hidden", t !== "fin");
+  $("discFeed").classList.toggle("hidden", t !== "disc");
+  $("tabOpen").classList.toggle("btn-primary", t === "open");
+  $("tabFin").classList.toggle("btn-primary", t === "fin");
+  $("tabDisc").classList.toggle("btn-primary", t === "disc");
+  $("arbTabHint").textContent = {
+    open: "分歧图盲审投票;对定稿结果有异议就切到「已定稿」,点开一键重开盲审。",
+    fin: "已定稿的图:点开查看定稿结果与真名;有异议点面板里「我有异议」一键重开盲审。",
+    disc: "全组最新讨论(实名、全库可见);点任意一条直接跳到那张图接着聊。"
+  }[t];
 }
 $("tabOpen").onclick = () => switchArbTab("open");
 $("tabFin").onclick = () => switchArbTab("fin");
+$("tabDisc").onclick = () => switchArbTab("disc");
+async function renderRvComments(stem) {
+  const box = $("rvComments");
+  try {
+    const d = await api("/api/comments?stem=" + encodeURIComponent(stem));
+    if (state.rvStem !== stem) return;                      // 面板已切到别的图
+    box.innerHTML = '<h2 style="margin-top:14px">图上讨论 <span class="pill">' + d.list.length + '</span>'
+      + ' <span class="hint inline">实名发言,全组可见</span></h2>'
+      + '<div class="arb-list">' + (d.list.length ? d.list.map((c) =>
+          '<div class="arb-item" style="cursor:default;flex-direction:column;align-items:flex-start;gap:2px">'
+          + "<b>" + esc(c.author) + "</b><span>" + esc(c.text) + '</span><span class="hint inline">' + esc(c.created_at) + "</span></div>").join("")
+        : '<p class="hint">还没有讨论,有疑问就说两句。</p>') + "</div>"
+      + '<div class="toolbar" style="margin-top:6px"><input id="cmtText" maxlength="500" style="flex:1;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px" placeholder="对这张图说点什么…(1~500 字)">'
+      + '<button class="btn btn-primary" id="cmtSend">发送</button></div>';
+    $("cmtSend").onclick = async () => {
+      const t = $("cmtText").value.trim();
+      if (!t) return;
+      try {
+        await api("/api/comments", { json: { stem, text: t } });
+        renderRvComments(stem);
+      } catch (err) { rvMsg(err.message); }
+    };
+  } catch (e) { box.innerHTML = ""; }
+}
 async function openReview(stem) {
   state.rvStem = stem;
   document.querySelectorAll(".arb-item").forEach((x) =>
@@ -679,6 +717,7 @@ async function openReview(stem) {
       openReview(stem);
     } catch (err) { rvMsg(err.message); }
   };
+  renderRvComments(stem);
   $("rvDisputes").innerHTML = d.final
     ? '<div class="toolbar"><button class="btn" id="btnDispute">我有异议(重开盲审)</button></div>'
       + (d.disputes.length ? '<p class="hint small">历史异议:' + d.disputes.map((x) =>
