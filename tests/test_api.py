@@ -478,7 +478,8 @@ def test_resubmit_final_author_still_agree_refinal(client):
 
 
 def test_tie_of_three_waits_for_4th_vote(client):
-    """P1-2:3 票 1:1:1 不得兜底定稿,满 4 票仍并列才取最早提交。"""
+    """规则变更(2026-09-17 组长定):平票不再兜底取最早提交——保持未决;
+    组内协商后改票(投票 upsert 覆盖)凑出严格过半才定稿。"""
     stem = "img_05"  # 现状:仅 cmx 的空图份
     submit(client, "hce", stem, [B("X", 5, 5, 20, 20)])
     submit(client, "zj", stem, [B("HS", 30, 30, 50, 50)])
@@ -492,14 +493,21 @@ def test_tie_of_three_waits_for_4th_vote(client):
     client.post("/api/vote", json={"stem": stem, "chosen_id": x_id}, headers=H("hce"))
     client.post("/api/vote", json={"stem": stem, "chosen_id": hs_id}, headers=H("zj"))
     rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
-    assert not rv["final"], "3 票并列必须继续等票,不得提前兜底"
+    assert not rv["final"], "3 票 1:1:1 → 保持未决"
     r = client.post("/api/vote", json={"stem": stem, "chosen_id": bx_id}, headers=H("zzq"))
-    assert r.json().get("final_id") == empty_id, "4 票并列 → 兜底取最早提交(空图份最早)"
+    assert not r.json().get("final_id"), "4 票全并列 → 不再兜底,保持未决等协商"
+    # 群里协商:zj 改投 X → 2:1:1 最高组唯一但不过半,仍不定稿
+    client.post("/api/vote", json={"stem": stem, "chosen_id": x_id}, headers=H("zj"))
+    rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
+    assert not rv["final"], "4 票 2:1:1 不过半 → 仍保持未决"
+    # zzq 也改投 X → 3:1 严格过半 → 定稿 X 份
+    r = client.post("/api/vote", json={"stem": stem, "chosen_id": x_id}, headers=H("zzq"))
+    assert r.json().get("final_id") == x_id, "协商改票凑出 3/4 过半 → 定稿"
 
 
 def test_dangling_votes_excluded_from_count(client):
     """P1-3:候选被撤后其选票悬空,不计入票数,也不再触发定稿/500。"""
-    stem = "img_05"  # 接上:final=cmx 空图份,第 1 轮已 4 票
+    stem = "img_05"  # 接上:final=hce 的 X 份(协商改票定稿),第 1 轮已 4 票
     d = client.post("/api/dispute", json={"stem": stem, "reason": "四种答案差太多,重投一轮"},
                     headers=H("zzq"))
     assert d.status_code == 200 and d.json()["round"] == 2

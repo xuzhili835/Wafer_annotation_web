@@ -160,3 +160,7 @@ main{padding:20px 24px 40px;min-width:0}
   .sidebar{position:static;height:auto}
   .ann-grid,.review-grid,.rv-wrap,.grid2{grid-template-columns:1fr}
 }
+
+/* 参照样例图例:色块 + 中文类名(不遮挡图片) */
+.ref-legend{display:flex;flex-wrap:wrap;gap:2px 12px;padding:4px 2px 0;font-size:12px;color:var(--muted);text-align:left}
+.ref-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}

@@ -183,6 +183,13 @@ function setCode(code) {
   $("codeTips").textContent = "【" + code + " " + (state.meta.names[code] || "") + "】" + CODE_TIPS[code];
   renderRefs(code);
 }
+function refLegendHtml(boxes) {
+  const seen = [...new Set((boxes || []).map((b) => b.code))];
+  if (!seen.length) return "";
+  return '<div class="ref-legend">' + seen.map((c) =>
+    '<span><i style="background:' + (state.meta.colors[c] || "#fff") + '"></i>'
+    + esc((state.meta.names && state.meta.names[c]) || c) + "</span>").join("") + "</div>";
+}
 function renderRefs(code) {
   const box = $("refBox");
   const list = (state.refs && state.refs[code]) || [];
@@ -203,6 +210,7 @@ function renderRefs(code) {
     img.src = r.url || ("/static/" + r.img);
     cv.onclick = () => bigLightbox(img.src, r.boxes || []);
     item.appendChild(cv);
+    item.insertAdjacentHTML("beforeend", refLegendHtml(r.boxes));
     const cap = document.createElement("div");
     cap.className = "cap"; cap.textContent = r.stem;
     item.appendChild(cap);
@@ -596,7 +604,7 @@ async function openReview(stem) {
             + "</div></div>";
         }).join("");
         return reasonHtml + cards
-          + (d.final ? "" : '<p class="hint small">投票规则:<b>全员 4 人都能投,包括已标注的人</b>(匿名状态下凭判断选对的一份,坚持己见也是票);≥3 票且最高组唯一才定稿 —— 2 个人定不了任何图;4 票仍平票,取提交最早的一份(规则公示,非人为裁定)。</p>');
+          + (d.final ? "" : '<p class="hint small">投票规则:<b>全员 4 人都能投,包括已标注的人</b>(匿名状态下凭判断选对的一份,坚持己见也是票);≥3 票且<b>严格过半</b>才定稿 —— 2 个人定不了任何图;<b>平票不自动定稿</b>:群里讨论后,再点另一份「投这份」即可覆盖你原来的票;定稿后仍可「我有异议」重开。</p>');
       })()
     : '<p class="hint">这张图还没有任何有效标注</p>';
   $("rvCands").onclick = async (e) => {
@@ -627,9 +635,10 @@ function rvMsg(t) {
   $("rvMsg").classList.remove("hidden");
 }
 function paintCands(g, d) {
+  const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
   d.candidates.forEach((c, i) => {
     const color = CAND_COLORS[i % CAND_COLORS.length];
-    (c.boxes || []).forEach((b) => drawRect(g, b, color, 3, c.anon + "·" + b.code));
+    (c.boxes || []).forEach((b) => drawRect(g, b, color, 3, c.anon + "·" + CN(b.code)));
   });
 }
 
@@ -673,7 +682,7 @@ function renderHelp() {
     "<tr><td>分配</td><td>每张图恰好 2 人打底(随机、每人约 255 张);不锁图,想加标随时加,进度板全透明。</td></tr>" +
     "<tr><td>留痕</td><td>每次提交/改判/撤销都是新记录,只追加不改写;可回放、可算每人一致率。</td></tr>" +
     "<tr><td>分歧</td><td>两份不一致 → 自动加派第三人盲标;框数相同且同码框 IoU≥0.6 视为一致。</td></tr>" +
-    "<tr><td>定稿</td><td>2 份一致自动定稿;不一致看盲投:≥3 票且多数 → 定稿;平票兜底取最早提交。</td></tr>" +
+    "<tr><td>定稿</td><td>2 份一致自动定稿;不一致 → 自动加第三人盲标(2/3 一致即定稿);仍无多数 → 全员盲投,≥3 票且严格过半才定稿;平票不自动定稿,群里协商后改票即可(再点另一份「投这份」覆盖原票)。</td></tr>" +
     "<tr><td>盲审</td><td>定稿前 everyone 匿名(甲乙丙丁),投完才解锁真名 —— 防碍于情面。</td></tr>" +
     "<tr><td>异议重审</td><td>对定稿有异议,一键「我有异议」+ 一句话理由,自动重开盲投(旧票作废)。</td></tr>" +
     "<tr><td>封板</td><td>任意一人发起,3/4 同意即锁定;训练只认封板后导出的 VOC XML。</td></tr>" +
@@ -703,6 +712,7 @@ function renderHelp() {
       img.src = r.url || ("/static/" + r.img);
       cvh.onclick = () => bigLightbox(img.src, r.boxes || []);
       item.appendChild(cvh);
+      item.insertAdjacentHTML("beforeend", refLegendHtml(r.boxes));
       const cap = document.createElement("div");
       cap.className = "cap"; cap.textContent = c + " · " + r.stem;
       item.appendChild(cap);
@@ -712,7 +722,7 @@ function renderHelp() {
   $("helpFaq").innerHTML =
     '<div class="faq-item"><b>标错了怎么办?</b> 定稿前:在「回看改判」里重新提交即可(留痕,不改历史);整笔撤销找组长在导出的留痕表里看,或重新提交一份正确的——投票只看最新有效标注。</div>' +
     '<div class="faq-item"><b>两人标的框差几个像素算分歧吗?</b> 不算。框数相同、同码框位置重叠足够大(IoU≥0.6)即视为一致,自动定稿。</div>' +
-    '<div class="faq-item"><b>平票怎么办?</b> 兜底规则:取提交时间最早的一份定稿(规则公示,非人为裁定)。</div>' +
+    '<div class="faq-item"><b>平票怎么办?</b> 平票不自动定稿——数据准确性优先。群里讨论后,在盲审面板再点另一份「投这份」即可改票(覆盖原票),≥3 票且严格过半即定稿;对已定稿结果不满,随时「我有异议」重开。</div>' +
     '<div class="faq-item"><b>令牌失效?</b> 浏览器保存 7 天,过期回登录页重贴一次即可;令牌本身永久有效。</div>' +
     '<div class="faq-item"><b>图加载慢?</b> 每张 640px 灰度 png 仅几十 KB;若网络抖动,点「刷新队列」重进。</div>';
 }
@@ -724,7 +734,7 @@ const TUT = [
   { t: "画框", b: "在缺陷上<b>按住鼠标拖拽</b>即画一个框。<ul><li>点框选中,拖动可移位</li><li>拖四角白点可缩放</li><li>右键点框 / 选中按 <kbd>Delete</kbd> 删除</li><li><kbd>Ctrl+Z</kbd> 撤销</li></ul>" },
   { t: "选类别", b: "右侧 12 个类别按钮,<b>快捷键见角标</b>(<kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>)。<ul><li>先选类再画框;选中已有框后按类别键可改它的类</li><li>悬停按钮有判定要点</li><li>整图无缺陷:勾选「本图无缺陷」或按 <kbd>N</kbd>,很重要,别硬找框!</li></ul>" },
   { t: "提交与改判", b: "画完点「提交本图」或按 <kbd>Enter</kbd>,<b>每画一笔自动存草稿</b>,崩了不怕。<ul><li>提交后图进盲审流程</li><li>「回看改判」可重新提交自己标过的未定稿图</li></ul>" },
-  { t: "分歧怎么办", b: "两人不一致 → 自动加派第三人盲审 → 多数票定稿,平票全员仲裁。<b>定稿前所有人都匿名(甲乙丙丁)</b>,放平心态,你的判断有价值。有异议随时重审,无理由才不受理。" },
+  { t: "分歧怎么办", b: "两人不一致 → 自动加派第三人盲审 → 僵局全员投票、严格过半定稿;平票不自动定稿,群里协商改票。<b>定稿前所有人都匿名(甲乙丙丁)</b>,放平心态,你的判断有价值。有异议随时重审,无理由才不受理。" },
   { t: "开始吧!", b: "队列已按你的分配洗好牌,直接开标。规则细节在「帮助与方案」页随时可查。<br><br><b>记住:如实标,不猜目录,不看别人。</b>" },
 ];
 let tutIdx = 0;
@@ -764,6 +774,10 @@ function bigLightbox(src, boxes) {
   i.src = src;
   lb.innerHTML = "";
   lb.appendChild(cvb);
+  const lg = document.createElement("div");
+  lg.style.cssText = "background:#fff;border-radius:8px;padding:6px 12px;margin-top:8px";
+  lg.innerHTML = refLegendHtml(boxes) || '<span class="hint">本图无缺陷框</span>';
+  lb.appendChild(lg);
   lb.classList.remove("hidden");
   lb.onclick = () => lb.classList.add("hidden");
 }

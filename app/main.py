@@ -156,8 +156,9 @@ def try_settle(conn, stem: str) -> dict:
     """定稿引擎(幂等):候选按一致性聚类;
     - 全一致 → 自动定稿;
     - 最大组 > 半数 → 事实多数,自动定稿(取组内最早提交);
-    - 否则(平票/分裂)看盲投(只数仍指向有效候选的票):≥3 票且最高组唯一 → 定稿;
-      满 4 票仍并列 → 兜底取并列各组中最早提交的一份。3 票并列继续等票。"""
+    - 否则(平票/分裂)看盲投(只数仍指向有效候选的票):≥3 票且最高组严格过半 → 定稿。
+    - 平票/最高组不过半 → 保持未决(2026-09-17 组长定:不再兜底取最早提交,
+      数据准确性交给人——组内群里讨论后改票即可覆盖原票,或对结果异议重开)。"""
     img = conn.execute("SELECT final_id FROM images WHERE stem=?", (stem,)).fetchone()
     if not img:
         return {"final_id": None}
@@ -201,12 +202,10 @@ def try_settle(conn, stem: str) -> dict:
         tally = Counter(id2group[v["chosen_id"]] for v in votes)
         top = max(tally.values())
         tops = [gi for gi, c in tally.items() if c == top]
-        if len(tops) == 1 and (top > n / 2 or n >= 4):
+        if len(tops) == 1 and top > n / 2:
             final_id = min(m["id"] for m in groups[tops[0]])
-        elif n >= 4:
-            # 兜底:并列各组中最早提交的一份(对齐启动文档口径)
-            final_id = min(m["id"] for gi in tops for m in groups[gi])
         else:
+            # 平票或最高组不过半:保持未决,等协商改票(投票 upsert 覆盖)/异议重开
             return {"final_id": None, "conflict": True, "votes": len(rows)}
     conn.execute("UPDATE images SET final_id=? WHERE stem=?", (final_id, stem))
     conn.commit()
