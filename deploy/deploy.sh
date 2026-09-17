@@ -45,8 +45,9 @@ log "── Step 2: pip 安装依赖 ──"
     -i https://mirrors.aliyun.com/pypi/simple/ \
     && log "✓ 依赖就绪" || fail "pip install 失败"
 
-# Step 3: 重启服务
+# Step 3: 重启服务(enable 保证开机自启,幂等)
 log "── Step 3: 重启 $SERVICE ──"
+sudo systemctl enable "$SERVICE" >/dev/null 2>&1 || true
 sudo systemctl restart "$SERVICE" || fail "systemctl restart 失败"
 
 # Step 4: 健康检查(本机直连)
