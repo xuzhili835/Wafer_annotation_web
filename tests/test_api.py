@@ -209,6 +209,13 @@ def test_validation(client):
 
 # ---------- 回归校准单 2026-09-17(find-bug-skill 独立审查轮追加,全部为已验证行为的回归钉) ----------
 
+def test_image_png_suffix(client):
+    r = client.get("/api/image/img_00.png", headers=H("hce"))
+    assert r.status_code == 200, "带 .png 后缀的图片 URL 应正常(CF 边缘缓存依赖扩展名)"
+    r = client.get("/api/image/img_00", headers=H("hce"))
+    assert r.status_code == 200, "不带后缀也保持可用"
+
+
 def test_health_public(client):
     r = client.get("/health")
     assert r.status_code == 200 and r.json()["ok"] is True

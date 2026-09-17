@@ -419,7 +419,7 @@ async function loadStem(stem, revise) {
     if (seq !== state.loadSeq) return;
     $("cvStem").textContent = stem + " · 图片加载失败,点「跳过」或刷新重试";
   };
-  img.src = "/api/image/" + stem;
+  img.src = "/api/image/" + stem + ".png";
   if (t.my_latest) {
     state.boxes = JSON.parse(JSON.stringify(JSON.parse(t.my_latest.boxes_json)));
     state.isEmpty = !!t.my_latest.is_empty;
@@ -512,7 +512,7 @@ async function openReview(stem) {
     g.drawImage(img, 0, 0, 640, 640); paintCands(g, d);
   };
   state.rvStem = stem;
-  img.src = "/api/image/" + stem;
+  img.src = "/api/image/" + stem + ".png";
   $("rvCands").innerHTML = d.candidates.length
     ? d.candidates.map((c, i) => {
         const color = CAND_COLORS[i % CAND_COLORS.length];

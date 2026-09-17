@@ -274,6 +274,9 @@ def queue(user: str = Depends(current_user)):
 
 @app.get("/api/image/{stem}")
 def image(stem: str, user: str = Depends(current_user)):
+    # URL 允许带 .png 后缀(前端如此拼)——CF 默认只缓存带静态扩展名的资源
+    if stem.endswith(".png"):
+        stem = stem[:-4]
     conn = connect()
     try:
         row = conn.execute("SELECT path FROM images WHERE stem=?", (stem,)).fetchone()
