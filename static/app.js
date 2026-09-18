@@ -1302,12 +1302,16 @@ $("admKeep").onclick = async () => {
 };
 
 async function loadReview() {
-  const r = await api("/api/admin/review-list");
-  state.admReviewGroups = r.groups;
-  state.admReviewItems = [...r.groups.A, ...r.groups.B, ...r.groups.L1].map((o) => o.stem);
-  state.admReviewSuggest = {};
-  ["A", "B", "L1"].forEach((k) => r.groups[k].forEach((o) => { state.admReviewSuggest[o.stem] = o.suggest.id; }));
-  renderReview();
+  try {
+    const r = await api("/api/admin/review-list");
+    state.admReviewGroups = r.groups;
+    state.admReviewItems = [...r.groups.A, ...r.groups.B, ...r.groups.L1].map((o) => o.stem);
+    state.admReviewSuggest = {};
+    ["A", "B", "L1"].forEach((k) => r.groups[k].forEach((o) => { state.admReviewSuggest[o.stem] = o.suggest.id; }));
+    renderReview();
+  } catch (err) {
+    $("admRList").innerHTML = '<p class="hint">复核清单加载失败: ' + esc(err.message) + '</p>';
+  }
 }
 
 const RV_GROUPS = [
@@ -1340,10 +1344,20 @@ function renderReview() {
 }
 
 async function loadBrowse() {
-  const r = await api("/api/browse");
-  state.bkAll = r.list;
-  state.bkFilter = "all";
-  renderBrowse();
+  const grid = $("bkGrid");
+  grid.innerHTML = '<p class="hint" style="padding:12px">正在加载全库定稿数据…</p>';
+  try {
+    const r = await api("/api/browse");
+    state.bkAll = r.list;
+    state.bkFilter = "all";
+    renderBrowse();
+    if (!state.bkAll.length) grid.innerHTML =
+      '<p class="hint" style="padding:12px">接口返回空清单——请按 F12 打开控制台截图反馈。</p>';
+  } catch (err) {
+    grid.innerHTML = '<p class="hint" style="padding:12px;color:#dc2626">加载失败: '
+      + esc(err.message) + ' —— 请确认已登录,并按 F12 打开控制台截图反馈。</p>';
+    $("bkFilters").innerHTML = "";
+  }
 }
 
 function bkList() {
