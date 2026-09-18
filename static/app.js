@@ -144,6 +144,8 @@ $("nav").addEventListener("click", async (e) => {
 /* ---------- 启动 ---------- */
 async function bootApp() {
   state.meta = await api("/api/meta");
+  const verTag = document.querySelector('script[src*="app.js"]');
+  if (verTag && $("appVer")) $("appVer").textContent = "脚本版本 v" + (verTag.src.split("v=")[1] || "?");
   const admBtn = document.querySelector('#nav button[data-view="admin"]');
   if (admBtn) admBtn.classList.toggle("hidden", !state.isAdmin);
   renderCodeBtns();
