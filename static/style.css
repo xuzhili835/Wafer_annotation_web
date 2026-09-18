@@ -256,3 +256,12 @@ ul.rv-rules li{margin:4px 0}
 .vf-issue{cursor:pointer;padding:2px 0}
 .vf-issue:hover{color:var(--primary)}
 #vfSummary p{margin:2px 0}
+
+.vf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;
+  max-height:70vh;overflow:auto;padding:2px}
+.vf-cell{border:1px solid var(--line);border-radius:8px;padding:4px;cursor:pointer;background:#fff}
+.vf-cell:hover{border-color:var(--primary)}
+.vf-cell.vf-bad{border-color:#dc2626;background:#fef2f2}
+.vf-cell canvas{width:100%;border-radius:4px;background:#0b1220}
+.vf-cell-meta{display:flex;justify-content:space-between;gap:4px;font-size:10.5px;
+  color:var(--muted);margin-top:2px}

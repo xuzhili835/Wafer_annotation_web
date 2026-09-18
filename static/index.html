@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="%230f766e"/><text x="16" y="21" font-size="12" font-weight="800" text-anchor="middle" fill="white" font-family="Segoe UI,sans-serif">W</text></svg>' />
 <title>光伏硅片标注站 · Wafer Annotation</title>
-<link rel="stylesheet" href="/static/style.css?v=023" />
+<link rel="stylesheet" href="/static/style.css?v=024" />
 </head>
 <body>
 
@@ -154,16 +154,20 @@
         <input type="file" id="vfInput" webkitdirectory multiple hidden />
         <div id="vfSummary" class="hidden"></div>
         <div id="vfViewer" class="hidden">
-          <div class="vf-layout">
-            <div class="vf-canvas-wrap"><canvas id="vfCv" width="640" height="640"></canvas></div>
-            <div class="vf-side">
-              <div><b id="vfTitle"></b><div id="vfTags"></div></div>
-              <div class="toolbar">
-                <button class="btn" id="vfPrev">← 上一张</button>
-                <button class="btn btn-primary" id="vfNext">下一张 →</button>
+          <div class="arb-chips hidden" id="vfFilters"></div>
+          <div id="vfGrid" class="vf-grid"></div>
+          <div id="vfDetail" class="hidden">
+            <div class="toolbar"><button class="btn btn-sm" id="vfBack">← 返回总览</button></div>
+            <div class="vf-layout">
+              <div class="vf-canvas-wrap"><canvas id="vfCv" width="640" height="640"></canvas></div>
+              <div class="vf-side">
+                <div><b id="vfTitle"></b><div id="vfTags"></div></div>
+                <div class="toolbar">
+                  <button class="btn" id="vfPrev">← 上一张</button>
+                  <button class="btn btn-primary" id="vfNext">下一张 →</button>
+                </div>
+                <p class="hint">←/→ 方向键翻张;Ctrl+滚轮缩放,双击复位。问题图在总览里红框标记。</p>
               </div>
-              <div id="vfIssues" class="hidden"></div>
-              <p class="hint">←/→ 方向键翻张;Ctrl+滚轮缩放,双击复位。有问题(缺配对/越界/未知类别)会在上方汇总,点条目直达。</p>
             </div>
           </div>
         </div>
@@ -241,6 +245,6 @@
 <!-- 图片放大模态 -->
 <div id="lightbox" class="lightbox hidden"><img id="lightboxImg" alt="" /></div>
 
-<script src="/static/app.js?v=045"></script>
+<script src="/static/app.js?v=046"></script>
 </body>
 </html>

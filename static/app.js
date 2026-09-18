@@ -1257,8 +1257,8 @@ makeZoomable(document.querySelector(".canvas-wrap.small"), $("rv"));       // �
 makeZoomable(document.querySelector(".adm-canvas-wrap"), $("admCv"));      // 管理台裁定区画布
 
 
-/* ---------- 打包前本地校验(拖入文件夹,纯本地不上传) ---------- */
-const vf = { items: [], idx: 0, img: null, url: null };
+/* ---------- 打包前本地校验(拖入文件夹,纯本地不上传;总览网格 + 单张放大) ---------- */
+const vf = { items: [], idx: 0, img: null, url: null, filter: "all", pending: 0 };
 
 $("vfDrop").onclick = () => $("vfInput").click();
 $("vfInput").onchange = async (e) => { if (e.target.files.length) await startVf([...e.target.files]); };
@@ -1270,10 +1270,11 @@ $("vfDrop").addEventListener("drop", async (e) => {
   const files = await vfCollect(e.dataTransfer);
   if (files.length) await startVf(files);
 });
+$("vfBack").onclick = () => vfOpenView("grid");
 $("vfPrev").onclick = () => vfStep(-1);
 $("vfNext").onclick = () => vfStep(1);
 document.addEventListener("keydown", (e) => {
-  if ($("vfViewer").classList.contains("hidden")) return;
+  if ($("vfDetail").classList.contains("hidden")) return;
   if (e.target && ["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
   if (e.key === "ArrowRight") vfStep(1);
   if (e.key === "ArrowLeft") vfStep(-1);
@@ -1346,31 +1347,130 @@ async function vfLoad(files) {
 async function startVf(files) {
   vf.items = await vfLoad(files);
   vf.idx = 0;
+  vf.pending = vf.items.filter((x) => x.img && x.w > 0).length;
+  vfRenderStats();
+  vfOpenView("grid");
+}
+
+function vfOpenView(v) {
+  const grid = v === "grid";
+  $("vfGrid").classList.toggle("hidden", !grid);
+  $("vfFilters").classList.toggle("hidden", !grid);
+  $("vfDetail").classList.toggle("hidden", grid);
+  if (grid) vfRenderGrid();
+}
+
+function vfFiltered() {
+  if (vf.filter === "issues") return vf.items.filter((x) => x.issues.length);
+  if (vf.filter === "empty") return vf.items.filter((x) => !x.issues.length && !x.boxes.length);
+  return vf.items;
+}
+
+function vfCount(k) {
+  if (k === "all") return vf.items.length;
+  if (k === "issues") return vf.items.filter((x) => x.issues.length).length;
+  return vf.items.filter((x) => !x.issues.length && !x.boxes.length).length;
+}
+
+function vfRenderStats() {
+  const n = vf.items.length;
   const bad = vf.items.filter((x) => x.issues.length);
-  const emptyN = vf.items.filter((x) => !x.issues.length && !x.boxes.length).length;
-  $("vfSummary").classList.remove("hidden");
+  const emptyN = vf.items.filter((x) => !x.boxes.length).length;
+  const cls = {};
+  vf.items.forEach((x) => x.boxes.forEach((b) => { cls[b.code] = (cls[b.code] || 0) + 1; }));
+  const dist = {};
+  vf.items.forEach((x) => { const k = String(x.boxes.length); dist[k] = (dist[k] || 0) + 1; });
   const CN = (c) => (state.meta.names && state.meta.names[c]) || c;
+  $("vfSummary").classList.remove("hidden");
   $("vfSummary").innerHTML =
-    '<p><b>' + vf.items.length + "</b> 个条目 · 空图负样本 " + emptyN
+    '<p><b>' + n + "</b> 个条目 · 有框 " + (n - emptyN) + " · 空图负样本 " + emptyN
     + " · " + (bad.length ? '<b class="tag-warn">问题 ' + bad.length + "</b>" : '<b class="tag-ok">全部干净 ✓</b>') + "</p>"
-    + (bad.length
-        ? bad.map((x) => '<p class="vf-issue" data-vfjump="' + esc(x.stem) + '"><b>' + esc(x.stem) + "</b> · "
-            + [...new Set(x.issues)].join(";") + "</p>").join("")
-        : "");
-  $("vfIssues").innerHTML = "";
-  $("vfViewer").classList.remove("hidden");
-  if (vf.items.length) await vfShow(0);
+    + '<p class="hint">框数分布: ' + Object.keys(dist).sort((a, b) => a - b)
+        .map((k) => k + "框×" + dist[k]).join(" · ") + "</p>"
+    + '<p class="hint">类别(按框): ' + Object.entries(cls).sort((a, b) => b[1] - a[1])
+        .map(([c, k]) => CN(c) + " " + k).join(" · ") + "</p>"
+    + (bad.length ? "<p>" + bad.map((x) => '<span class="vf-issue" data-vfjump="' + esc(x.stem)
+        + '"><b>' + esc(x.stem) + "</b>(" + [...new Set(x.issues)].join(";") + ')</span>').join(" · ") + "</p>" : "");
+}
+
+function vfRenderFilters() {
+  $("vfFilters").innerHTML = [["all", "全部"], ["issues", "有问题"], ["empty", "空图"]].map(([k, label]) =>
+    '<button class="chip2' + (vf.filter === k ? " on" : "") + '" data-vffilter="' + k + '">'
+    + label + " " + vfCount(k) + "</button>").join("");
+}
+
+function vfRenderGrid() {
+  const items = vfFiltered();
+  vf.gridList = items;
+  vfRenderFilters();
+  const grid = $("vfGrid");
+  grid.innerHTML = "";
+  items.forEach((it) => {
+    const i = vf.items.indexOf(it);
+    const cell = document.createElement("div");
+    cell.className = "vf-cell" + (it.issues.length ? " vf-bad" : "");
+    cell.title = it.issues.length ? it.issues.join(" / ") : "点击放大核对";
+    cell.innerHTML = '<canvas width="160" height="160"></canvas>'
+      + '<div class="vf-cell-meta"><span>' + esc(it.stem) + "</span><span>"
+      + (it.boxes.length ? it.boxes.length + "框" : "空图") + "</span></div>";
+    cell.onclick = () => { vf.idx = i; vfOpenView("detail"); vfShow(i); };
+    grid.appendChild(cell);
+    vfThumbDraw(it, cell.querySelector("canvas"), cell);
+  });
 }
 document.addEventListener("click", (e) => {
   const j = e.target.closest("[data-vfjump]");
   if (!j) return;
   const i = vf.items.findIndex((x) => x.stem === j.dataset.vfjump);
-  if (i >= 0) vfShow(i);
+  if (i >= 0) { vf.idx = i; vfOpenView("detail"); vfShow(i); }
 });
+$("vfFilters").onclick = (e) => {
+  const b = e.target.closest("[data-vffilter]");
+  if (b) { vf.filter = b.dataset.vffilter; vfRenderGrid(); }
+};
+
+async function vfThumbDraw(it, cv, cell) {
+  const g = cv.getContext("2d");
+  const paint = (bmp) => {
+    g.fillStyle = "#0b1220";
+    g.fillRect(0, 0, 160, 160);
+    if (bmp) g.drawImage(bmp, 0, 0, 160, 160);
+    else if (!it.boxes.length && !it.img) {
+      g.fillStyle = "#94a3b8"; g.font = "13px sans-serif"; g.textAlign = "center";
+      g.fillText("空图", 80, 84); g.textAlign = "left";
+    }
+    const k = it.w > 0 ? 160 / it.w : 0;
+    it.boxes.forEach((b, i2) => {
+      const color = (state.meta.colors && state.meta.colors[b.code]) || CAND_COLORS[i2 % CAND_COLORS.length];
+      g.strokeStyle = color; g.lineWidth = 2;
+      g.strokeRect(b.x0 * k, b.y0 * k, (b.x1 - b.x0) * k, (b.y1 - b.y0) * k);
+    });
+  };
+  paint(null);
+  if (!it.img) return;
+  try {
+    const bmp = await createImageBitmap(it.img);
+    if (it.w > 0 && (bmp.width !== it.w || bmp.height !== it.h)) {
+      it.issues.push("尺寸不符 " + bmp.width + "x" + bmp.height + "(XML " + it.w + "x" + it.h + ")");
+      cell.classList.add("vf-bad");
+    }
+    paint(bmp);
+    bmp.close();
+  } catch (e) {
+    it.issues.push("图片解码失败");
+    cell.classList.add("vf-bad");
+  }
+  vf.pending = Math.max(0, vf.pending - 1);
+  if (vf.pending === 0) {
+    vfRenderStats();                                   // 缩略图全部核完(含尺寸核对)后刷新统计
+    vfRenderFilters();                                 // 过滤片计数同步(尺寸不符是异步查出的)
+  }
+}
 
 function vfStep(d) {
   if (!vf.items.length) return;
-  vfShow((vf.idx + d + vf.items.length) % vf.items.length);
+  vf.idx = (vf.idx + d + vf.items.length) % vf.items.length;
+  vfShow(vf.idx);
 }
 
 async function vfShow(i) {
