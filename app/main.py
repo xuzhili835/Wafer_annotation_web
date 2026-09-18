@@ -1168,4 +1168,13 @@ def exp_voc(user: str = Depends(current_user)):
 
 # ---------------- 静态前端 ----------------
 app.mount("/static", StaticFiles(directory="static"), name="static")
+@app.middleware("http")
+async def no_cache_html(request, call_next):
+    """HTML 一律 no-cache:防止浏览器缓存旧 index.html 导致新版本发不出去(版本号形同虚设)。"""
+    resp = await call_next(request)
+    if resp.headers.get("content-type", "").startswith("text/html"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="root")

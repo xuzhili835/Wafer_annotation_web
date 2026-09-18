@@ -1390,17 +1390,25 @@ function renderBrowse() {
       g.strokeStyle = color; g.lineWidth = 2;
       g.strokeRect(b.x0 * k, b.y0 * k, (b.x1 - b.x0) * k, (b.y1 - b.y0) * k);
     });
-    const img = new Image();
-    img.onload = () => {
-      g.fillStyle = "#0b1220"; g.fillRect(0, 0, 160, 160);
-      g.drawImage(img, 0, 0, 160, 160);
-      o.boxes.forEach((b, i3) => {
-        const color = (state.meta.colors && state.meta.colors[b.code]) || CAND_COLORS[i3 % CAND_COLORS.length];
-        g.strokeStyle = color; g.lineWidth = 2;
-        g.strokeRect(b.x0 * k, b.y0 * k, (b.x1 - b.x0) * k, (b.y1 - b.y0) * k);
+    // 图片懒加载:滚近视野才请求(510 张一次性全拉会把页面卡死),框先画好
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (!en.isIntersecting) return;
+        io.unobserve(en.target);
+        const im = new Image();
+        im.onload = () => {
+          g.fillStyle = "#0b1220"; g.fillRect(0, 0, 160, 160);
+          g.drawImage(im, 0, 0, 160, 160);
+          o.boxes.forEach((b, i3) => {
+            const color = (state.meta.colors && state.meta.colors[b.code]) || CAND_COLORS[i3 % CAND_COLORS.length];
+            g.strokeStyle = color; g.lineWidth = 2;
+            g.strokeRect(b.x0 * k, b.y0 * k, (b.x1 - b.x0) * k, (b.y1 - b.y0) * k);
+          });
+        };
+        im.src = "/api/image/" + o.stem + ".webp";
       });
-    };
-    img.src = "/api/image/" + o.stem + ".webp";
+    }, { root: grid, rootMargin: "120px" });
+    io.observe(cell);
   });
 }
 $("bkFilters").onclick = (e) => {
