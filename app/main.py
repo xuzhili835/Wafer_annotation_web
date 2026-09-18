@@ -147,6 +147,16 @@ def current_round(conn, stem: str) -> int:
     return int(row["r"])
 
 
+def _log_settlement(conn, stem: str, event: str, final_id, rnd: int,
+                    tallies=None, note: str = "") -> None:
+    """过程问责留痕(只追加):images 上只有 final_id 一个指针,"何时以什么票型定稿、
+    何时被谁摘牌"这些事件本身没有历史,全靠这张表一句话还原。"""
+    conn.execute(
+        "INSERT INTO settlements(stem,event,round,final_id,tallies,note) VALUES(?,?,?,?,?,?)",
+        (stem, event, rnd, final_id,
+         json.dumps(tallies, ensure_ascii=False) if tallies else None, note))
+
+
 def _candidates(conn, stem: str) -> list:
     return conn.execute(
         "SELECT * FROM annotations WHERE stem=? AND revoked=0 ORDER BY submitted_at, id",
@@ -169,6 +179,9 @@ def try_settle(conn, stem: str) -> dict:
                              (img["final_id"],)).fetchone()
         if alive is None or alive["revoked"]:
             conn.execute("UPDATE images SET final_id=NULL WHERE stem=?", (stem,))
+            _log_settlement(conn, stem, "unseal", img["final_id"],
+                            current_round(conn, stem),
+                            note="定稿候选已被撤销(幽灵防护),摘牌重裁")
             conn.commit()
         else:
             return {"final_id": img["final_id"]}
@@ -186,6 +199,7 @@ def try_settle(conn, stem: str) -> dict:
         if not placed:
             groups.append([c])
     groups.sort(key=lambda g: (len(g), -g[0]["id"]), reverse=True)
+    vote_tally = None
     if len(groups) == 1:
         final_id = groups[0][0]["id"]
     elif len(groups[0]) > len(cands) / 2:
@@ -205,10 +219,18 @@ def try_settle(conn, stem: str) -> dict:
         tops = [gi for gi, c in tally.items() if c == top]
         if len(tops) == 1 and top > n / 2:
             final_id = min(m["id"] for m in groups[tops[0]])
+            vote_tally = dict(tally)
         else:
             # 平票或最高组不过半:保持未决,等协商改票(投票 upsert 覆盖)/异议重开
             return {"final_id": None, "conflict": True, "votes": len(rows)}
     conn.execute("UPDATE images SET final_id=? WHERE stem=?", (final_id, stem))
+    # 定稿事件留痕:聚类快照(各组代表 id/份数),投票定稿附各组实票数;note=定稿方式
+    rnd = current_round(conn, stem)
+    snap = [{"id": g[0]["id"], "n": len(g),
+             **({"votes": vote_tally[gi]} if vote_tally and gi in vote_tally else {})}
+            for gi, g in enumerate(groups)]
+    _log_settlement(conn, stem, "final", final_id, rnd, tallies=snap,
+                    note=_settle_via(conn, stem, final_id, rnd))
     conn.commit()
     return {"final_id": final_id}
 
@@ -517,6 +539,9 @@ def submit(body: SubmitBody, user: str = Depends(current_user)):
         if img["final_id"] and img["final_id"] in old_ids:
             # 被替换的正是当前定稿 → 摘牌,交给 try_settle 重新裁决(防幽灵定稿)
             conn.execute("UPDATE images SET final_id=NULL WHERE stem=?", (body.stem,))
+            _log_settlement(conn, body.stem, "unseal", img["final_id"],
+                            current_round(conn, body.stem),
+                            note=f"定稿候选被 {user} 修订,摘牌重裁")
         conn.execute(
             "INSERT INTO annotations(stem,annotator,boxes_json,is_empty) VALUES(?,?,?,?)",
             (body.stem, user, json.dumps(boxes), int(body.is_empty)))
@@ -536,8 +561,15 @@ def revoke(ann_id: int, user: str = Depends(current_user)):
         if not row or row["annotator"] != user:
             raise HTTPException(403, "只能撤销自己的标注")
         conn.execute("UPDATE annotations SET revoked=1 WHERE id=?", (ann_id,))
+        cur = conn.execute("SELECT final_id FROM images WHERE stem=?",
+                           (row["stem"],)).fetchone()
+        was_final = bool(cur and cur["final_id"] == ann_id)
         conn.execute("UPDATE images SET final_id=NULL WHERE stem=? AND final_id=?",
                      (row["stem"], ann_id))
+        if was_final:
+            _log_settlement(conn, row["stem"], "unseal", ann_id,
+                            current_round(conn, row["stem"]),
+                            note=f"定稿候选被 {user} 撤销,摘牌重裁")
         conn.commit()
         result = try_settle(conn, row["stem"])
         return {"ok": True, **result}
@@ -612,6 +644,15 @@ def vote(body: VoteBody, user: str = Depends(current_user)):
             if not c:
                 raise HTTPException(404, "候选不存在")
         round_no = current_round(conn, body.stem)
+        old = conn.execute(
+            "SELECT chosen_id, voted_at FROM votes WHERE stem=? AND reviewer=? AND round=?",
+            (body.stem, user, round_no)).fetchone()
+        if old and old["chosen_id"] != body.chosen_id:
+            # 改票留痕:upsert 覆盖前旧票先进 vote_history(只追加),"他当时投了什么"永久可查
+            conn.execute(
+                "INSERT INTO vote_history(stem,reviewer,chosen_id,round,voted_at)"
+                " VALUES(?,?,?,?,?)",
+                (body.stem, user, old["chosen_id"], round_no, old["voted_at"]))
         conn.execute(
             "INSERT INTO votes(stem,reviewer,chosen_id,round) VALUES(?,?,?,?)"
             " ON CONFLICT(stem,reviewer,round) DO UPDATE SET chosen_id=excluded.chosen_id,"
@@ -643,6 +684,9 @@ def dispute(body: DisputeBody, user: str = Depends(current_user)):
             "SELECT COALESCE(MAX(round),1) r FROM votes WHERE stem=?", (body.stem,)).fetchone()["r"]
         conn.execute("INSERT INTO disputes(stem,raised_by,reason,round) VALUES(?,?,?,?)",
                      (body.stem, user, reason, round_no + 1))
+        if img["final_id"]:
+            _log_settlement(conn, body.stem, "reopen", img["final_id"], round_no + 1,
+                            note=f"{user}:{reason}")
         conn.execute("UPDATE images SET final_id=NULL WHERE stem=?", (body.stem,))  # 重开(旧票原地留痕,当前轮查票自然不含)
         conn.commit()
         return {"ok": True, "round": round_no + 1}

@@ -32,7 +32,7 @@ main_mod.DATA_DIR = cfg.DATA_DIR
 TOKENS = {m: f"{m}_testtoken" for m in cfg.MEMBERS}
 
 
-def _make_data(tmp_path, n=9, size=64):
+def _make_data(tmp_path, n=12, size=64):
     from PIL import Image
     data = tmp_path / "data"
     train = data / "训练集"
@@ -100,12 +100,12 @@ def test_login_and_meta(client):
 
 def test_assignment(client):
     r = client.get("/api/queue", headers=H("hce")).json()["queue"]
-    assert len(r) == 9
+    assert len(r) == 12
     # 每张图恰好 2 个不同分配人
     conn = db_mod.connect()
     try:
         rows = conn.execute("SELECT assignee_a, assignee_b FROM images").fetchall()
-        assert len(rows) == 9
+        assert len(rows) == 12
         for row in rows:
             assert row["assignee_a"] != row["assignee_b"]
         counts = {m: 0 for m in TOKENS}
@@ -255,10 +255,10 @@ def test_reference_prod(client):
     client.cookies.clear()
     assert client.get("/api/reference_prod").status_code == 401
     assert client.get(x["url"]).status_code == 401
-    # 测试集绝不进标注库(仍 6 张)
+    # 测试集绝不进标注库(仍 12 张训练图)
     conn = db_mod.connect()
     try:
-        assert conn.execute("SELECT COUNT(*) c FROM images").fetchone()["c"] == 9
+        assert conn.execute("SELECT COUNT(*) c FROM images").fetchone()["c"] == 12
     finally:
         conn.close()
 
@@ -632,3 +632,109 @@ def test_settle_via_unanimous_and_majority(client):
     fin2 = client.get("/api/arbitration?scope=final", headers=H("hce")).json()["list"]
     o2 = next(x for x in fin2 if x["stem"] == "img_08")
     assert o2["ann"] and not o2["ann_final"] and not o2["vote"], "hce 被否且没投过票"
+
+
+# ---------- 过程问责留痕 2026-09-18(补丁 A 改票历史 / 补丁 B 定稿事件日志) ----------
+
+def test_vote_history_records_changed_vote(client):
+    """补丁 A:同人同轮改票,旧票被 upsert 覆盖前必须先进 vote_history;同票重按不算改票。"""
+    stem = "img_09"
+    submit(client, "cmx", stem, [B("KD", 10, 10, 30, 30)])
+    submit(client, "hce", stem, [B("HS", 40, 40, 60, 60)])
+    rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
+    kd = next(c["id"] for c in rv["candidates"] if c["boxes"][0]["code"] == "KD")
+    hs = next(c["id"] for c in rv["candidates"] if c["boxes"][0]["code"] == "HS")
+    client.post("/api/vote", json={"stem": stem, "chosen_id": kd}, headers=H("zzq"))
+    client.post("/api/vote", json={"stem": stem, "chosen_id": hs}, headers=H("zzq"))  # 改票
+    conn = db_mod.connect()
+    try:
+        cur = conn.execute(
+            "SELECT chosen_id FROM votes WHERE stem=? AND reviewer='zzq'", (stem,)).fetchone()
+        hist = conn.execute(
+            "SELECT chosen_id, round FROM vote_history WHERE stem=? AND reviewer='zzq'",
+            (stem,)).fetchall()
+    finally:
+        conn.close()
+    assert cur["chosen_id"] == hs, "当前票应是改后的"
+    assert len(hist) == 1 and hist[0]["chosen_id"] == kd and hist[0]["round"] == 1, \
+        "被覆盖的旧票必须留史(谁、何时、投给谁)"
+    client.post("/api/vote", json={"stem": stem, "chosen_id": hs}, headers=H("zzq"))  # 同票重按
+    conn = db_mod.connect()
+    try:
+        n = conn.execute("SELECT COUNT(*) c FROM vote_history WHERE stem=?",
+                         (stem,)).fetchone()["c"]
+    finally:
+        conn.close()
+    assert n == 1, "同票重复提交不算改票,不追加历史噪音"
+
+
+def test_settlements_log_final_and_reopen(client):
+    """补丁 B:投票定稿记 final(含票型与 via),异议重开记 reopen(含提出人与理由)。"""
+    stem = "img_10"
+    submit(client, "cmx", stem, [B("KD", 10, 10, 30, 30)])
+    submit(client, "hce", stem, [B("HS", 40, 40, 60, 60)])
+    rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
+    kd = next(c["id"] for c in rv["candidates"] if c["boxes"][0]["code"] == "KD")
+    for u in ("zzq", "zj", "cmx"):
+        client.post("/api/vote", json={"stem": stem, "chosen_id": kd}, headers=H(u))
+    rv = client.get("/api/review/" + stem, headers=H("zzq")).json()
+    assert rv["final"], "3 票 3:0 → 定稿"
+    conn = db_mod.connect()
+    try:
+        fins = conn.execute(
+            "SELECT round, final_id, tallies, note FROM settlements"
+            " WHERE stem=? AND event='final'", (stem,)).fetchall()
+        old_final = conn.execute("SELECT final_id FROM images WHERE stem=?",
+                                 (stem,)).fetchone()["final_id"]
+    finally:
+        conn.close()
+    assert len(fins) == 1 and fins[0]["final_id"] == old_final, "定稿事件一条,指针一致"
+    assert fins[0]["note"] == "vote", "3 票定稿 via 应为 vote"
+    snap = json.loads(fins[0]["tallies"])
+    assert any(s.get("votes") == 3 for s in snap), "票型快照应含 3 票组"
+    d = client.post("/api/dispute", json={"stem": stem, "reason": "定稿得太快,再看一眼"},
+                    headers=H("zj"))
+    assert d.status_code == 200
+    conn = db_mod.connect()
+    try:
+        ro = conn.execute(
+            "SELECT round, final_id, note FROM settlements WHERE stem=? AND event='reopen'",
+            (stem,)).fetchall()
+        now_final = conn.execute("SELECT final_id FROM images WHERE stem=?",
+                                 (stem,)).fetchone()["final_id"]
+    finally:
+        conn.close()
+    assert len(ro) == 1 and ro[0]["final_id"] == old_final and now_final is None, \
+        "重开事件记录被摘掉的定稿,且指针确已清空"
+    assert ro[0]["round"] == 2 and "zj" in ro[0]["note"] and "再看一眼" in ro[0]["note"], \
+        "重开轮次与提出人+理由原文在案"
+
+
+def test_settlements_log_unanimous_and_unseal(client):
+    """补丁 B:一致定稿也留痕(via=unanimous);定稿作者改判 → unseal 摘牌留痕。"""
+    stem = "img_11"
+    submit(client, "cmx", stem, [B("KD", 10, 10, 30, 30)])
+    r = submit(client, "hce", stem, [B("KD", 11, 10, 29, 30)])   # IoU 高 → 一致定稿
+    assert r.get("final_id")
+    conn = db_mod.connect()
+    try:
+        fins = conn.execute(
+            "SELECT final_id, tallies, note FROM settlements WHERE stem=? AND event='final'",
+            (stem,)).fetchall()
+        old_final = conn.execute("SELECT final_id FROM images WHERE stem=?",
+                                 (stem,)).fetchone()["final_id"]
+    finally:
+        conn.close()
+    assert len(fins) == 1 and fins[0]["final_id"] == old_final and fins[0]["note"] == "unanimous"
+    assert json.loads(fins[0]["tallies"])[0]["n"] == 2, "一致簇两份"
+    r = submit(client, "cmx", stem, [B("KD", 50, 50, 63, 63)])   # 定稿代表(最早提交)改判到远处
+    assert not r.get("final_id"), "改判后进入冲突"
+    conn = db_mod.connect()
+    try:
+        uns = conn.execute(
+            "SELECT final_id, note FROM settlements WHERE stem=? AND event='unseal'",
+            (stem,)).fetchall()
+    finally:
+        conn.close()
+    assert len(uns) == 1 and uns[0]["final_id"] == old_final and "cmx" in uns[0]["note"], \
+        "摘牌事件记录被摘的定稿与行为人"

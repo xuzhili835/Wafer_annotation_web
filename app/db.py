@@ -64,6 +64,30 @@ CREATE TABLE IF NOT EXISTS comments(
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_comments_stem ON comments(stem);
+-- 过程问责留痕(2026-09-18,均只追加、永不 UPDATE/DELETE):
+-- vote_history:改票时被覆盖的旧票(votes 的 upsert 会抹掉"当时投了什么")
+CREATE TABLE IF NOT EXISTS vote_history(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  stem TEXT NOT NULL,
+  reviewer TEXT NOT NULL,
+  chosen_id INTEGER NOT NULL,
+  round INTEGER NOT NULL,
+  voted_at TEXT NOT NULL,          -- 旧票的原投时间
+  superseded_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_vote_history_stem ON vote_history(stem);
+-- settlements:定稿/摘牌/重开事件日志(images 上只有一个 final_id 指针,事件本身无历史)
+CREATE TABLE IF NOT EXISTS settlements(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  stem TEXT NOT NULL,
+  event TEXT NOT NULL,             -- final=定稿 / unseal=摘牌 / reopen=异议重开
+  round INTEGER NOT NULL,
+  final_id INTEGER,                -- final=新定稿标注 id;unseal/reopen=被摘掉的旧定稿 id
+  tallies TEXT,                    -- final 事件:当时聚类与票型 JSON [{id,n,votes?}]
+  note TEXT,                       -- final:定稿方式 via;unseal/reopen:原因(含人物)
+  created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_settlements_stem ON settlements(stem);
 """
 
 
