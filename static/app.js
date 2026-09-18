@@ -442,6 +442,11 @@ $("btnPrev").onclick = () => stepQueue(-1);
 function nextStem(skipCurrent) {
   stepQueue(skipCurrent ? 2 : 1);
 }
+function preloadImages(stems) {
+  // 静默预取:趁用户看当前图时把接下来的图拉到手(带 cookie 走正常鉴权)。
+  // 浏览器对同 URL 自动去重、命中 24h 缓存不发包,重复调用零成本;面板真加载时即秒出。
+  (stems || []).forEach((s) => { const im = new Image(); im.src = "/api/image/" + s + ".webp"; });
+}
 function stepQueue(delta) {
   const todo = state.queue.filter((o) => o.pri <= 3);
   if (!todo.length) {
@@ -453,6 +458,7 @@ function stepQueue(delta) {
   }
   state.qi = ((state.qi + delta) % todo.length + todo.length) % todo.length;
   loadStem(todo[state.qi].stem, false);
+  preloadImages(todo.slice(state.qi + 1, state.qi + 3).map((o) => o.stem));   // 预取接下来两张
 }
 async function loadStem(stem, revise) {
   const seq = (state.loadSeq = (state.loadSeq || 0) + 1);   // 加载序号:连点/慢网时只认最新一次
@@ -592,6 +598,7 @@ async function loadArb() {
     if (it) openReview(it.dataset.cstem);
   };
   switchArbTab(state.arbTab || "open");
+  preloadImages(state.arbOpen.filter((o) => o.my == null).slice(0, 6).map((o) => o.stem));   // 预取待表态前 6 张,翻图不等 1s 回源
   if (state.discTimer) { clearInterval(state.discTimer); state.discTimer = null; }
   state.discTimer = setInterval(() => {
     if (document.getElementById("view-review").classList.contains("hidden")
