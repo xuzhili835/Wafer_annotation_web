@@ -660,16 +660,24 @@ function renderArbList() {
 function renderFinList() {
   const cur = state.finFilter || "mine";
   const all = state.arbFinal || [];
+  const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
+  // 类别筛选(2026-09-18):系统性错标(如崩边口径)要整批捞出来复查;
+  // 只列定稿里出现过的类别,按数量降序;与「与我有关/我的被否」叠加(AND)
+  const codeCnt = {};
+  all.forEach((o) => (o.codes || []).forEach((c) => { codeCnt[c] = (codeCnt[c] || 0) + 1; }));
+  const codeChips = Object.entries(codeCnt).sort((a, b) => b[1] - a[1]);
+  const fc = state.finCode || "";
+  const scoped = fc ? all.filter((o) => (o.codes || []).includes(fc)) : all;
   const cnt = {
-    mine: all.filter((o) => o.ann || o.vote).length,
-    rej: all.filter((o) => o.ann && !o.ann_final).length,
-    skip: all.filter((o) => !o.ann && !o.vote).length,
-    all: all.length,
+    mine: scoped.filter((o) => o.ann || o.vote).length,
+    rej: scoped.filter((o) => o.ann && !o.ann_final).length,
+    skip: scoped.filter((o) => !o.ann && !o.vote).length,
+    all: scoped.length,
   };
-  let list = all;
-  if (cur === "mine") list = all.filter((o) => o.ann || o.vote);
-  else if (cur === "rej") list = all.filter((o) => o.ann && !o.ann_final);
-  else if (cur === "skip") list = all.filter((o) => !o.ann && !o.vote);
+  let list = scoped;
+  if (cur === "mine") list = scoped.filter((o) => o.ann || o.vote);
+  else if (cur === "rej") list = scoped.filter((o) => o.ann && !o.ann_final);
+  else if (cur === "skip") list = scoped.filter((o) => !o.ann && !o.vote);
   const VIA = { vote: "投票定稿", majority: "多数一致", unanimous: "全一致" };
   const VIA_NOTE = {
     vote: "三人各有说法,全组盲投,票多且过半者定 · 建议优先复查",
@@ -696,11 +704,19 @@ function renderFinList() {
         + fv[k].map(finItem).join("")).join(""))
     : '<p class="hint">' + (cur === "all" ? "还没有定稿的图" : "这个筛选下没有图,点「全部」看全部定稿。") + "</p>";
   $("finList").innerHTML = all.length
-    ? chipRow(FIN_FILTERS, cur, "ff", cnt) + body
+    ? chipRow(FIN_FILTERS, cur, "ff", cnt)
+      + '<div class="arb-chips fin-codes">'
+      + '<button class="chip2' + (fc ? "" : " on") + '" data-fc="">全部 ' + all.length + "</button>"
+      + codeChips.map(([c, n]) => '<button class="chip2' + (fc === c ? " on" : "")
+        + '" data-fc="' + esc(c) + '" title="定稿结果含「' + CN(c) + '」框的图,点它整批捞出来复查">'
+        + CN(c) + " " + n + "</button>").join("")
+      + "</div>" + body
     : '<p class="hint">还没有定稿的图</p>';
   $("finList").onclick = (e) => {
     const ch = e.target.closest("[data-ff]");
     if (ch) { state.finFilter = ch.dataset.ff; renderFinList(); return; }
+    const cb = e.target.closest("[data-fc]");
+    if (cb) { state.finCode = cb.dataset.fc || null; renderFinList(); return; }
     const it = e.target.closest(".arb-item[data-fstem]");
     if (it) openReview(it.dataset.fstem);
   };

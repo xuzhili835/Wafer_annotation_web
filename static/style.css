@@ -230,3 +230,6 @@ ul.rv-rules li{margin:4px 0}
 
 /* 样例库图片:保持方形,不按 640px 属性高度撑开 */
 #helpRefs canvas{height:auto;aspect-ratio:1/1}
+
+/* 已定稿类别筛选行:排在关系 chips 下方,不 sticky(避免与上行叠加) */
+.fin-codes{position:static;border-bottom:none;margin-bottom:2px}

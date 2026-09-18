@@ -628,6 +628,7 @@ def test_settle_via_unanimous_and_majority(client):
     fin = client.get("/api/arbitration?scope=final", headers=H("cmx")).json()["list"]
     o = next(x for x in fin if x["stem"] == "img_08")
     assert o["via"] == "majority"
+    assert o["codes"] == ["DQK"], "定稿条目应带类别(类别筛选依据)"
     assert o["ann"] and o["ann_final"], "cmx 的标注即定稿 → 我的✓"
     fin2 = client.get("/api/arbitration?scope=final", headers=H("hce")).json()["list"]
     o2 = next(x for x in fin2 if x["stem"] == "img_08")

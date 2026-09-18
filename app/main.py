@@ -720,6 +720,8 @@ def arbitration(scope: str = "open", user: str = Depends(current_user)):
                     if my_choice is not None and my_choice != -1 else None
                 out.append({"stem": r["stem"], "round": rnd,
                             "via": _settle_via(conn, r["stem"], r["final_id"], rnd),
+                            "codes": sorted({b["code"] for b in json.loads(fin_ann["boxes_json"])})
+                                     if fin_ann else [],
                             "ann": bool(my_anns),
                             "ann_final": bool(fin_ann) and any(boxes_match(fin_ann, c) for c in my_anns),
                             "vote": my_choice_ann is not None,
