@@ -522,10 +522,18 @@ $("btnSubmit").onclick = async () => {
     annMsg("提交成功" + tail, "ok");
     refreshTopbar();                       // 数字立刻少一张,不用刷新页面
     if (state.reviseMode) {
-      // 审阅修订:提交后回到盲审面板看判定结果
+      // 改判提交后原路返回:管理台来的回管理台继续敲定,盲审面板来的回盲审看判定
+      const back = state.reviseReturn || "review";
+      const doneStem = state.stem;
+      state.reviseReturn = null;
       setTimeout(() => {
-        document.querySelector('#nav button[data-view="review"]').click();
-        openReview(state.stem);
+        if (back === "admin") {
+          document.querySelector('#nav button[data-view="admin"]').click();
+          openAdmStem(doneStem);
+        } else {
+          document.querySelector('#nav button[data-view="review"]').click();
+          openReview(doneStem);
+        }
       }, 900);
     } else {
       setTimeout(() => nextStem(), 900);
@@ -931,6 +939,7 @@ async function openReview(stem) {
     : '<p class="hint">这张图还没有任何有效标注</p>';
   $("rvCands").onclick = async (e) => {
     if (e.target.closest("#btnFixHere")) {
+      state.reviseReturn = "review";                   // 提交后回盲审面板看判定
       document.querySelector('#nav button[data-view="annotate"]').click();
       setTimeout(() => loadStem(stem, true), 50);
       return;
@@ -1028,6 +1037,7 @@ function redrawRv() {
 $("btnAdmRefresh").onclick = () => loadAdmin();
 $("admGoDraw").onclick = () => {
   if (!state.admStem) return;
+  state.reviseReturn = "admin";                        // 提交后回管理台继续敲定
   document.querySelector('#nav button[data-view="annotate"]').click();
   setTimeout(() => loadStem(state.admStem, true), 50);
 };
