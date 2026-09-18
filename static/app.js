@@ -92,6 +92,7 @@ async function tryBoot() {
     const me = await api("/api/me");
     if (!me.name) throw new Error("no user");
     state.me = me.name;
+    state.isAdmin = !!me.is_admin;
     $("loginLayer").classList.add("hidden");
     $("whoami").classList.remove("hidden");
     $("whoami").querySelector("b").textContent = me.name;
@@ -105,6 +106,7 @@ $("btnLogin").onclick = async () => {
     const r = await api("/api/login", { json: { token: tok } });
     localStorage.setItem("wafer_token", tok);
     state.me = r.name;
+    state.isAdmin = !!r.is_admin;
     $("loginLayer").classList.add("hidden");
     $("whoami").classList.remove("hidden");
     $("whoami").querySelector("b").textContent = r.name;
@@ -127,19 +129,22 @@ $("nav").addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-view]");
   if (!b) return;
   document.querySelectorAll("#nav button").forEach((x) => x.classList.toggle("active", x === b));
-  ["annotate", "progress", "review", "export", "help"].forEach((v) =>
+  ["annotate", "progress", "review", "admin", "export", "help"].forEach((v) =>
     $("view-" + v).classList.toggle("hidden", v !== b.dataset.view));
   if (b.dataset.view === "progress") { loadProgress(); startProgressPolling(); }
   else stopProgressPolling();
   if (b.dataset.view === "annotate") startTopPolling();
   else stopTopPolling();
   if (b.dataset.view === "review") { clearCmtBadge(); loadArb(); }
+  if (b.dataset.view === "admin") loadAdmin();
   if (b.dataset.view === "export") loadSeal();
 });
 
 /* ---------- 启动 ---------- */
 async function bootApp() {
   state.meta = await api("/api/meta");
+  const admBtn = document.querySelector('#nav button[data-view="admin"]');
+  if (admBtn) admBtn.classList.toggle("hidden", !state.isAdmin);
   renderCodeBtns();
   renderHelp();
   try { state.refs = await (await fetch("/static/ref/reference.json")).json(); } catch (e) { state.refs = {}; }
@@ -678,8 +683,9 @@ function renderFinList() {
   if (cur === "mine") list = scoped.filter((o) => o.ann || o.vote);
   else if (cur === "rej") list = scoped.filter((o) => o.ann && !o.ann_final);
   else if (cur === "skip") list = scoped.filter((o) => !o.ann && !o.vote);
-  const VIA = { vote: "投票定稿", majority: "多数一致", unanimous: "全一致" };
+  const VIA = { admin: "线下敲定", vote: "投票定稿", majority: "多数一致", unanimous: "全一致" };
   const VIA_NOTE = {
+    admin: "全组线下讨论后由管理员直接裁定,未走投票 · 人工最明确",
     vote: "三人各有说法,全组盲投,票多且过半者定 · 建议优先复查",
     majority: "第三人补标后与前两份之一相同,凑成多数直接定稿,没走投票",
     unanimous: "两份(或全部)标注完全相同,系统直接定稿,最省心",
@@ -694,11 +700,12 @@ function renderFinList() {
       + '<b class="' + (o.via === "vote" ? "tag-warn" : "tag-ok") + '" title="' + VIA_NOTE[o.via] + '">'
       + (VIA[o.via] || o.via) + "</b>" + round + "</span></div>";
   };
-  const fv = { vote: list.filter((o) => o.via === "vote"),
+  const fv = { admin: list.filter((o) => o.via === "admin"),
+               vote: list.filter((o) => o.via === "vote"),
                majority: list.filter((o) => o.via === "majority"),
                unanimous: list.filter((o) => o.via === "unanimous") };
   const body = list.length
-    ? (["vote", "majority", "unanimous"].filter((k) => fv[k].length).map((k) =>
+    ? (["admin", "vote", "majority", "unanimous"].filter((k) => fv[k].length).map((k) =>
         '<div class="arb-group"><span>' + VIA[k] + "(" + fv[k].length + ')</span>'
         + '<span class="grp-note">' + VIA_NOTE[k] + "</span></div>"
         + fv[k].map(finItem).join("")).join(""))
@@ -909,7 +916,8 @@ async function openReview(stem) {
           + '<button class="btn btn-sm" id="btnFixHere" title="提交后自动成为新候选参与判定;已定稿的图会自动重开盲审">都不全/都不对?去画一份正确的 →</button></div></div>';
         const rulesHtml = d.final
           ? (d.via !== "vote" ? '<p class="hint small">这张<b>没有经过投票</b>:'
-              + (d.via === "unanimous" ? "所有标注一致,系统按规则直接定稿"
+              + (d.via === "admin" ? "全组线下讨论后由管理员直接敲定"
+                : d.via === "unanimous" ? "所有标注一致,系统按规则直接定稿"
                 : "第三人补标后与其中一方一致,凑成事实多数,系统自动定稿")
               + '——所以候选上没有票数(或只有零星补投),不是没人管。有异议随时「我有异议」重开。</p>' : "")
           : '<ul class="rv-rules">'
@@ -1013,6 +1021,143 @@ function redrawRv() {
   g.fillStyle = "#0b1220"; g.fillRect(0, 0, 640, 640);
   if (state.rvImg) g.drawImage(state.rvImg, 0, 0, 640, 640);
   paintCands(g, d, state.rvFocus);
+}
+
+
+/* ---------- 管理台(线下仲裁工作台,管理员专用) ---------- */
+$("btnAdmRefresh").onclick = () => loadAdmin();
+$("admGoDraw").onclick = () => {
+  if (!state.admStem) return;
+  document.querySelector('#nav button[data-view="annotate"]').click();
+  setTimeout(() => loadStem(state.admStem, true), 50);
+};
+async function loadAdmin() {
+  const [q, f] = await Promise.all([api("/api/admin/queue"), api("/api/arbitration?scope=final")]);
+  state.admQueue = q.list;
+  state.admFinal = f.list;
+  renderAdmReopen();
+  renderAdmList();
+}
+function renderAdmReopen() {
+  const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
+  const cnt = {};
+  (state.admFinal || []).forEach((o) => (o.codes || []).forEach((c) => { cnt[c] = (cnt[c] || 0) + 1; }));
+  const chips = Object.entries(cnt).sort((a, b) => b[1] - a[1]);
+  $("admReopen").innerHTML = chips.length
+    ? chips.map(([c, n]) => '<span class="adm-ro"><b>' + CN(c) + " " + n + "</b>"
+        + '<button class="btn btn-sm" data-admro="' + esc(c) + '">打回这 ' + n + " 张</button></span>").join("")
+    : '<p class="hint">还没有已定稿的图,无需打回。</p>';
+  $("admReopen").onclick = async (e) => {
+    const b = e.target.closest("[data-admro]");
+    if (!b) return;
+    const c = b.dataset.admro;
+    const n = cnt[c] || 0;
+    if (!confirm("把定稿含「" + CN(c) + "」的全部 " + n + " 张图打回重审?(轮次+1,旧票作废,逐张留痕)")) return;
+    try {
+      const r = await api("/api/admin/reopen_batch", { json: { code: c } });
+      $("admProgress").textContent = "已打回 " + r.count + " 张(" + CN(c) + "),在「本轮重开」队列里逐张裁定。";
+      await loadAdmin();
+    } catch (err) { $("admProgress").textContent = "打回失败:" + err.message; }
+  };
+}
+function renderAdmList() {
+  const cur = state.admTab || "reopened";
+  const all = state.admQueue || [];
+  const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
+  const cnt = { reopened: all.filter((o) => o.reopened).length, all: all.length };
+  const list = cur === "reopened" ? all.filter((o) => o.reopened) : all;
+  $("admChips").innerHTML =
+    '<button class="chip2' + (cur === "reopened" ? " on" : "") + '" data-admtab="reopened">本轮重开 ' + cnt.reopened + "</button>"
+    + '<button class="chip2' + (cur === "all" ? " on" : "") + '" data-admtab="all">全部待决 ' + cnt.all + "</button>";
+  $("admList").innerHTML = list.length
+    ? list.map((o) => '<div class="arb-item' + (state.admStem === o.stem ? " active" : "") + '" data-admstem="' + esc(o.stem) + '">'
+        + "<code>" + esc(o.stem) + "</code><span>" + (o.reopened ? '<b class="tag-warn">已打回</b>' : "")
+        + o.cands + " 份 · " + o.codes.map(CN).join("/") + "</span></div>").join("")
+    : '<p class="hint">' + (cur === "reopened"
+        ? "没有待重裁的重开图。要打回一批用上面 ①;要看全部待决切「全部待决」。"
+        : "全部待决已清空,干得漂亮!") + "</p>";
+  $("admChips").onclick = (e) => {
+    const b = e.target.closest("[data-admtab]");
+    if (b) { state.admTab = b.dataset.admtab; renderAdmList(); }
+  };
+  $("admList").onclick = (e) => {
+    const it = e.target.closest("[data-admstem]");
+    if (it) openAdmStem(it.dataset.admstem);
+  };
+  $("admProgress").textContent = "队列剩余:本轮重开 " + cnt.reopened + " 张 · 全部待决 " + cnt.all + " 张";
+}
+async function openAdmStem(stem) {
+  state.admStem = stem;
+  state.admFocus = null;
+  renderAdmList();
+  $("admWork").classList.remove("hidden");
+  $("admEmpty").classList.add("hidden");
+  $("admTitle").textContent = "加载中…";
+  const d = await api("/api/admin/candidates?stem=" + encodeURIComponent(stem));
+  if (state.admStem !== stem) return;
+  state.admData = d;
+  $("admTitle").textContent = stem + " · 第" + d.round + "轮"
+    + (d.final_id ? " · 已定稿(再敲 = 改判)" : " · 未定稿");
+  const seq = (state.admSeq = (state.admSeq || 0) + 1);
+  const img = new Image();
+  img.onload = () => { if (seq === state.admSeq) { state.admImg = img; drawAdm(); } };
+  img.src = "/api/image/" + stem + ".webp";
+  $("admFocus").innerHTML = '<button class="btn btn-sm" data-admf="-1">全部</button>'
+    + d.candidates.map((c, i) => '<button class="btn btn-sm" data-admf="' + i + '" title="只看他的框">'
+        + '<b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">' + esc(c.annotator) + "</b></button>").join("")
+    + '<button class="btn btn-sm" data-admf="-2" title="只看原图不画框">原图</button>';
+  $("admFocus").onclick = (e) => {
+    const b = e.target.closest("[data-admf]");
+    if (!b) return;
+    state.admFocus = parseInt(b.dataset.admf, 10);
+    document.querySelectorAll("#admFocus [data-admf]").forEach((x) => {
+      x.style.opacity = parseInt(x.dataset.admf, 10) === state.admFocus ? "1" : "0.55";
+    });
+    drawAdm();
+  };
+  const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
+  $("admCands").innerHTML = d.candidates.map((c, i) => {
+    const tally = {};
+    (c.boxes || []).forEach((b) => { tally[b.code] = (tally[b.code] || 0) + 1; });
+    const sum = c.is_empty ? "空图(无缺陷)"
+      : Object.entries(tally).map(([c2, n2]) => CN(c2) + "×" + n2).join(" + ") || "无框";
+    return '<div class="adm-cand"><div><b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">'
+      + esc(c.annotator) + '</b><span class="hint inline">' + sum + "</span>"
+      + (d.final_id === c.id ? ' <b class="tag-ok">当前定稿</b>' : "") + "</div>"
+      + '<button class="btn btn-sm btn-primary" data-admfin="' + c.id + '">敲定为这份</button></div>';
+  }).join("");
+  $("admCands").onclick = async (e) => {
+    const b = e.target.closest("[data-admfin]");
+    if (!b) return;
+    const cid = parseInt(b.dataset.admfin, 10);
+    const c = d.candidates.find((x) => x.id === cid);
+    if (!confirm("把 " + stem + " 敲定为「" + c.annotator + "」的这份?")) return;
+    try {
+      await api("/api/admin/finalize", { json: { stem, chosen_id: cid, reason: $("admReason").value.trim() } });
+      $("admReason").value = "";
+      const remain = (state.admQueue || []).filter((o) => o.stem !== stem
+        && (state.admTab === "all" || o.reopened));
+      await loadAdmin();
+      const next = remain.length ? remain[0].stem : null;
+      if (next) openAdmStem(next);
+      else {
+        $("admWork").classList.add("hidden");
+        $("admEmpty").classList.remove("hidden");
+        $("admTitle").textContent = "从左侧选一张图";
+      }
+    } catch (err) { $("admProgress").textContent = "敲定失败:" + err.message; }
+  };
+}
+function drawAdm() {
+  const d = state.admData;
+  if (!d || state.admStem !== d.stem) return;
+  const g = $("admCv").getContext("2d");
+  g.clearRect(0, 0, 640, 640);
+  g.fillStyle = "#0b1220";
+  g.fillRect(0, 0, 640, 640);
+  if (state.admImg) g.drawImage(state.admImg, 0, 0, 640, 640);
+  paintCands(g, { stem: d.stem, candidates: d.candidates.map((c) => ({ anon: c.annotator, boxes: c.boxes })) },
+    state.admFocus);
 }
 
 /* ---------- 导出与封板 ---------- */

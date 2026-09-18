@@ -45,3 +45,14 @@ ANON_NAMES = ("甲", "乙", "丙", "丁")  # 盲审匿名代称(按候选提交�
 
 IOU_MATCH_THR = 0.6          # 两框视为"同一处"的 IoU 阈值
 REVIEW_ROUND = 1             # dispute 每开一轮 +1,旧票作废
+
+
+def load_admins() -> set[str]:
+    """管理员名单:DATA_DIR/admin.txt 一行一个名字(# 开头为注释),实时读取、改完即生效;
+    文件不存在或为空 = 全员管理员(线下仲裁不固定谁操作,哪台电脑登谁 token 都行)。"""
+    f = DATA_DIR / "admin.txt"
+    if f.exists():
+        names = {ln.strip() for ln in f.read_text(encoding="utf-8").splitlines()
+                 if ln.strip() and not ln.strip().startswith("#")}
+        return names or set(MEMBERS)
+    return set(MEMBERS)

@@ -739,3 +739,81 @@ def test_settlements_log_unanimous_and_unseal(client):
         conn.close()
     assert len(uns) == 1 and uns[0]["final_id"] == old_final and "cmx" in uns[0]["note"], \
         "摘牌事件记录被摘的定稿与行为人"
+
+
+# ---------- 管理台(线下仲裁工作台)2026-09-18 ----------
+
+def test_admin_gate_and_queue(client):
+    """权限:写 admin.txt 收紧名单后,非管理员 403;队列带真名候选与重开标记。"""
+    (db_mod.DATA_DIR / "admin.txt").write_text("# 只有 cmx 是管理员\ncmx\n", encoding="utf-8")
+    r = client.get("/api/admin/queue", headers=H("zj"))
+    assert r.status_code == 403, "非管理员必须 403"
+    r = client.get("/api/admin/queue", headers=H("cmx"))
+    assert r.status_code == 200
+    q = {o["stem"]: o for o in r.json()["list"]}
+    assert "img_11" in q and q["img_11"]["reopened"] is False, "冲突未决且无异议 → 不算重开"
+    c = client.get("/api/admin/candidates?stem=img_11", headers=H("cmx")).json()
+    names = {x["annotator"] for x in c["candidates"]}
+    assert names == {"cmx", "hce"}, "管理台候选显示真名"
+    assert client.get("/api/admin/candidates?stem=img_11", headers=H("zj")).status_code == 403
+    me = client.get("/api/me", headers=H("zj")).json()
+    assert me["is_admin"] is False and client.get("/api/me", headers=H("cmx")).json()["is_admin"] is True
+
+
+def test_admin_finalize_skips_vote(client):
+    """敲定:未满 3 票的分歧图被管理员直接定稿;settlements 记 admin 事件;via=admin。"""
+    stem = "img_09"
+    rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
+    assert not rv["final"]
+    kd = next(c["id"] for c in rv["candidates"] if c["boxes"][0]["code"] == "KD")
+    r = client.post("/api/admin/finalize", json={"stem": stem, "chosen_id": kd, "reason": "组长拍板"},
+                    headers=H("cmx"))
+    assert r.status_code == 200 and r.json()["final_id"] == kd
+    rv = client.get("/api/review/" + stem, headers=H("cmx")).json()
+    assert rv["final"] and rv["final_id"] == kd
+    fin = client.get("/api/arbitration?scope=final", headers=H("cmx")).json()["list"]
+    o = next(x for x in fin if x["stem"] == stem)
+    assert o["via"] == "admin", "管理台敲定的定稿方式应为 admin"
+    conn = db_mod.connect()
+    try:
+        row = conn.execute("SELECT note FROM settlements WHERE stem=? AND event='final'", (stem,)).fetchall()
+    finally:
+        conn.close()
+    assert row and row[-1]["note"].startswith("admin:cmx:") and "组长拍板" in row[-1]["note"], "敲定留痕含人物与原因"
+
+
+def test_admin_reopen_batch_by_code(client):
+    """批量打回:只打回定稿含目标类别的图;每张 disputes+settlements 留痕;他类定稿不动。"""
+    # 对照组:把 img_11 敲定为 KD 定稿(不含 BX),批量打回 BX 时必须毫发无损
+    rv11 = client.get("/api/admin/candidates?stem=img_11", headers=H("cmx")).json()
+    r = client.post("/api/admin/finalize", json={"stem": "img_11", "chosen_id": rv11["candidates"][0]["id"]},
+                    headers=H("cmx"))
+    assert r.status_code == 200
+    conn = db_mod.connect()
+    try:
+        keep = conn.execute("SELECT final_id FROM images WHERE stem='img_11'").fetchone()["final_id"]
+    finally:
+        conn.close()
+    assert keep, "前置:对照组 img_11 应已定稿"
+    # 造一张 BX 一致定稿(img_09 当前 cmx=KD、hce=HS,补成 BX 二人一致 → 事实多数定稿)
+    submit(client, "cmx", "img_09", [B("BX", 5, 5, 40, 40)])
+    r = submit(client, "hce", "img_09", [B("BX", 6, 5, 41, 40)])
+    assert r.get("final_id"), "BX 抱团 2/3 → 定稿"
+    r = client.post("/api/admin/reopen_batch", json={"code": "BX"}, headers=H("cmx"))
+    assert r.status_code == 200 and r.json()["count"] >= 1
+    conn = db_mod.connect()
+    try:
+        s9 = conn.execute("SELECT final_id FROM images WHERE stem='img_09'").fetchone()["final_id"]
+        s11 = conn.execute("SELECT final_id FROM images WHERE stem='img_11'").fetchone()["final_id"]
+        d = conn.execute("SELECT raised_by, reason FROM disputes WHERE stem='img_09'"
+                         " ORDER BY id DESC LIMIT 1").fetchone()
+        ro = conn.execute("SELECT note FROM settlements WHERE stem='img_09' AND event='reopen'"
+                          " ORDER BY id DESC LIMIT 1").fetchone()
+    finally:
+        conn.close()
+    assert s9 is None and s11 == keep, "BX 被打回,对照组 KD 定稿不动"
+    assert d and d["raised_by"] == "cmx" and d["reason"].startswith("批量打回[BX]")
+    assert ro and "批量打回[BX]" in ro["note"]
+    q = client.get("/api/admin/queue", headers=H("cmx")).json()["list"]
+    o9 = next(x for x in q if x["stem"] == "img_09")
+    assert o9["reopened"] is True, "打回后进入「本轮重开」队列"

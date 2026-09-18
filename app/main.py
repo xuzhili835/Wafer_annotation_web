@@ -20,7 +20,8 @@ from pydantic import BaseModel, Field
 from app import export
 from app.auth import current_user
 from app.config import (ANON_NAMES, CODES, CODE_COLORS, CODE_KEYS, CODE_NAMES,
-                        DATA_DIR, HOST, IOU_MATCH_THR, MEMBERS, PORT, RARE_CODES)
+                        DATA_DIR, HOST, IOU_MATCH_THR, MEMBERS, PORT, RARE_CODES,
+                        load_admins)
 from app.db import connect, init_db
 
 app = FastAPI(title="Wafer Annotation Web", version="0.1.0")
@@ -60,7 +61,8 @@ def login(body: LoginBody):
         row = conn.execute("SELECT name FROM tokens WHERE token = ?", (body.token,)).fetchone()
         if not row:
             raise HTTPException(401, "令牌无效:请核对后重试")
-        resp = Response(content=json.dumps({"name": row["name"]}), media_type="application/json")
+        resp = Response(content=json.dumps({"name": row["name"], "is_admin": str(row["name"]) in load_admins()}),
+                        media_type="application/json")
         # secure=True:令牌 cookie 只在 HTTPS 连接回传(CF 边缘 TLS),http 明文段不再携带
         resp.set_cookie("wafer_token", body.token, max_age=7 * 24 * 3600,
                         httponly=True, samesite="lax", secure=True)
@@ -87,8 +89,8 @@ def me(request: Request, x_token: str | None = Header(default=None)) -> dict:
         finally:
             conn.close()
         if row:
-            return {"name": str(row["name"])}
-    return {"name": None}
+            return {"name": str(row["name"]), "is_admin": str(row["name"]) in load_admins()}
+    return {"name": None, "is_admin": False}
 
 
 # ---------------- 框匹配与定稿引擎 ----------------
@@ -233,6 +235,17 @@ def try_settle(conn, stem: str) -> dict:
                     note=_settle_via(conn, stem, final_id, rnd))
     conn.commit()
     return {"final_id": final_id}
+
+
+def _final_via(conn, stem: str, final_id: int, rnd: int) -> str:
+    """对外展示的定稿方式:管理台敲定优先(留痕里最近一次 final 事件是 admin:开头),
+    其余按引擎规则推断(unanimous/majority/vote)。"""
+    row = conn.execute(
+        "SELECT note FROM settlements WHERE stem=? AND event='final' ORDER BY id DESC LIMIT 1",
+        (stem,)).fetchone()
+    if row and row["note"].startswith("admin:"):
+        return "admin"
+    return _settle_via(conn, stem, final_id, rnd)
 
 
 def _settle_via(conn, stem: str, final_id: int, rnd: int) -> str:
@@ -616,7 +629,7 @@ def review(stem: str, user: str = Depends(current_user)):
                 "candidates": out_cands, "tally": dict(tally), "votes": len(votes),
                 "abstains": abstains, "my_vote": my_vote, "round": round_no,
                 "final_id": img["final_id"] if revealed else None,
-                "via": _settle_via(conn, stem, img["final_id"], round_no) if revealed else None,
+                "via": _final_via(conn, stem, img["final_id"], round_no) if revealed else None,
                 "winners": winners,
                 "disputes": [dict(d) for d in disputes]}
     finally:
@@ -694,6 +707,115 @@ def dispute(body: DisputeBody, user: str = Depends(current_user)):
         conn.close()
 
 
+# ---------------- 管理台(线下仲裁工作台,全员默认为管理员) ----------------
+def require_admin(user: str) -> None:
+    if user not in load_admins():
+        raise HTTPException(403, "仅管理员可操作(名单见 data/admin.txt,缺省全员)")
+
+
+@app.get("/api/admin/queue")
+def admin_queue(user: str = Depends(current_user)):
+    """管理台裁定队列:全部未决图 + 重开标记 + 候选类别并集(普通用户不可见)。"""
+    require_admin(user)
+    conn = connect()
+    try:
+        rows = conn.execute("SELECT stem FROM images WHERE final_id IS NULL ORDER BY stem").fetchall()
+        out = []
+        for r in rows:
+            cands = _candidates(conn, r["stem"])
+            if len(cands) < 2:
+                continue
+            rnd = current_round(conn, r["stem"])
+            reopened = bool(conn.execute("SELECT 1 FROM disputes WHERE stem=? AND round=?",
+                                         (r["stem"], rnd)).fetchone())
+            codes = sorted({b["code"] for c in cands for b in json.loads(c["boxes_json"])})
+            out.append({"stem": r["stem"], "cands": len(cands), "codes": codes,
+                        "reopened": reopened, "round": rnd})
+        out.sort(key=lambda o: (not o["reopened"], -o["cands"], o["stem"]))
+        return {"list": out}
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/candidates")
+def admin_candidates(stem: str, user: str = Depends(current_user)):
+    """管理台裁定区候选:真名(线下会本就实名讨论,不走匿名盲投层)。"""
+    require_admin(user)
+    conn = connect()
+    try:
+        if not conn.execute("SELECT 1 FROM images WHERE stem=?", (stem,)).fetchone():
+            raise HTTPException(404, "没有这张图")
+        cands = [{"id": c["id"], "annotator": c["annotator"],
+                  "boxes": json.loads(c["boxes_json"]), "is_empty": bool(c["is_empty"]),
+                  "submitted_at": c["submitted_at"]} for c in _candidates(conn, stem)]
+        fin = conn.execute("SELECT final_id FROM images WHERE stem=?", (stem,)).fetchone()["final_id"]
+        return {"stem": stem, "candidates": cands, "final_id": fin,
+                "round": current_round(conn, stem)}
+    finally:
+        conn.close()
+
+
+class AdminFinalBody(BaseModel):
+    stem: str
+    chosen_id: int
+    reason: str = ""
+
+
+@app.post("/api/admin/finalize")
+def admin_finalize(body: AdminFinalBody, user: str = Depends(current_user)):
+    """线下会当场敲定:定稿指针直接指到所选候选,跳过投票;对已定稿图再敲 = 改判覆盖。"""
+    require_admin(user)
+    conn = connect()
+    try:
+        if not conn.execute("SELECT 1 FROM images WHERE stem=?", (body.stem,)).fetchone():
+            raise HTTPException(404, "没有这张图")
+        if not conn.execute("SELECT 1 FROM annotations WHERE id=? AND stem=? AND revoked=0",
+                            (body.chosen_id, body.stem)).fetchone():
+            raise HTTPException(404, "候选不存在或已撤销(空图请先「去画」提交一份空标注再敲定)")
+        rnd = current_round(conn, body.stem)
+        conn.execute("UPDATE images SET final_id=? WHERE stem=?", (body.chosen_id, body.stem))
+        _log_settlement(conn, body.stem, "final", body.chosen_id, rnd,
+                        note=f"admin:{user}:{body.reason.strip() or '线下会裁定'}")
+        conn.commit()
+        return {"ok": True, "final_id": body.chosen_id}
+    finally:
+        conn.close()
+
+
+class AdminReopenBody(BaseModel):
+    code: str
+    reason: str = ""
+
+
+@app.post("/api/admin/reopen_batch")
+def admin_reopen_batch(body: AdminReopenBody, user: str = Depends(current_user)):
+    """按类别批量打回:定稿含该类别的图全部清定稿、轮次+1(旧票作废)、逐张留痕。"""
+    require_admin(user)
+    code = body.code.strip().upper()
+    if code not in CODES:
+        raise HTTPException(400, "未知类别")
+    conn = connect()
+    try:
+        n = 0
+        for r in conn.execute("SELECT stem, final_id FROM images WHERE final_id IS NOT NULL").fetchall():
+            fin = conn.execute("SELECT boxes_json FROM annotations WHERE id=? AND revoked=0",
+                               (r["final_id"],)).fetchone()
+            if not fin or code not in {b["code"] for b in json.loads(fin["boxes_json"])}:
+                continue
+            rnd = current_round(conn, r["stem"])
+            reason = f"批量打回[{code}] {body.reason.strip()}".strip()
+            conn.execute("INSERT INTO disputes(stem,raised_by,reason,round) VALUES(?,?,?,?)",
+                         (r["stem"], user, reason, rnd + 1))
+            _log_settlement(conn, r["stem"], "reopen", r["final_id"], rnd + 1,
+                            note=f"admin:{user}:批量打回[{code}]")
+            conn.execute("UPDATE images SET final_id=NULL WHERE stem=?", (r["stem"],))
+            n += 1
+        conn.commit()
+        return {"ok": True, "count": n}
+    finally:
+        conn.close()
+
+
 @app.get("/api/arbitration")
 def arbitration(scope: str = "open", user: str = Depends(current_user)):
     """scope=open(默认):待决列表(分歧未决/异议重开);scope=final:已定稿列表(异议入口)。"""
@@ -719,7 +841,7 @@ def arbitration(scope: str = "open", user: str = Depends(current_user)):
                 my_choice_ann = next((c for c in cands if c["id"] == my_choice), None) \
                     if my_choice is not None and my_choice != -1 else None
                 out.append({"stem": r["stem"], "round": rnd,
-                            "via": _settle_via(conn, r["stem"], r["final_id"], rnd),
+                            "via": _final_via(conn, r["stem"], r["final_id"], rnd),
                             "codes": sorted({b["code"] for b in json.loads(fin_ann["boxes_json"])})
                                      if fin_ann else [],
                             "ann": bool(my_anns),

@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="%230f766e"/><text x="16" y="21" font-size="12" font-weight="800" text-anchor="middle" fill="white" font-family="Segoe UI,sans-serif">W</text></svg>' />
 <title>光伏硅片标注站 · Wafer Annotation</title>
-<link rel="stylesheet" href="/static/style.css?v=021" />
+<link rel="stylesheet" href="/static/style.css?v=022" />
 </head>
 <body>
 
@@ -32,6 +32,7 @@
       <button data-view="annotate" class="active">标注</button>
       <button data-view="progress">进度</button>
       <button data-view="review">审阅仲裁</button>
+      <button data-view="admin" class="hidden">管理台</button>
       <button data-view="export">导出</button>
       <button data-view="help">帮助与方案</button>
     </nav>
@@ -155,6 +156,41 @@
       </div>
     </section>
 
+    <!-- 管理台视图(线下仲裁工作台,仅管理员可见) -->
+    <section id="view-admin" class="hidden">
+      <div class="topbar"><div><h1>管理台 <span class="pill todo">线下会专用</span></h1>
+        <p>批量打回 → 逐张敲定,当场拍板不走投票;每一步留痕,可查可审计。</p></div>
+        <div class="toolbar"><button class="btn" id="btnAdmRefresh">刷新</button></div></div>
+      <div class="card">
+        <h2>① 批量打回已定稿 <span class="hint inline">按当前定稿的缺陷类别整批打回,一次一类;打回后进下方「本轮重开」队列</span></h2>
+        <div id="admReopen" class="adm-reopen"><p class="hint">加载中…</p></div>
+      </div>
+      <div class="adm-grid">
+        <div class="card adm-list">
+          <h2>② 裁定队列</h2>
+          <div class="arb-chips" id="admChips"></div>
+          <div id="admList" class="adm-items"></div>
+        </div>
+        <div class="card adm-panel">
+          <h2>③ 裁定区 <span id="admTitle" class="hint inline">从左侧选一张图</span></h2>
+          <div class="adm-work hidden" id="admWork">
+            <div class="adm-canvas-wrap"><canvas id="admCv" width="640" height="640"></canvas>
+              <div class="rv-actions"><div class="rv-row"><span class="rv-label">画布只看</span><div id="admFocus"></div></div></div>
+            </div>
+            <div class="adm-side">
+              <p class="hint">大家讨论一致后,点对应候选的「敲定」;现有候选都不对就先「去画一份」,回来敲你画的那份。</p>
+              <div class="rv-row"><span class="rv-label">原因(可选)</span>
+                <input id="admReason" type="text" autocomplete="off" placeholder="默认:线下会裁定" /></div>
+              <div id="admCands"></div>
+              <div class="toolbar"><button class="btn btn-sm" id="admGoDraw">都不全/都不对?去画一份 →</button></div>
+            </div>
+          </div>
+          <p id="admEmpty" class="hint">从左侧队列选一张图开始裁定。</p>
+        </div>
+      </div>
+      <p class="hint" id="admProgress"></p>
+    </section>
+
     <!-- 帮助视图 -->
     <section id="view-help" class="hidden">
       <div class="topbar"><div><h1>帮助与方案</h1><p>先读这里,再开工</p></div>
@@ -185,6 +221,6 @@
 <!-- 图片放大模态 -->
 <div id="lightbox" class="lightbox hidden"><img id="lightboxImg" alt="" /></div>
 
-<script src="/static/app.js?v=038"></script>
+<script src="/static/app.js?v=039"></script>
 </body>
 </html>
