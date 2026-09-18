@@ -535,7 +535,7 @@ $("btnSubmit").onclick = async () => {
       setTimeout(() => {
         if (back === "admin") {
           document.querySelector('#nav button[data-view="admin"]').click();
-          openAdmStem(doneStem);
+          openAdmStem(doneStem, true);                 // 回来先只看自己刚改的那份
         } else {
           document.querySelector('#nav button[data-view="review"]').click();
           openReview(doneStem);
@@ -1098,13 +1098,14 @@ function renderAdmList() {
   };
   $("admList").onclick = (e) => {
     const it = e.target.closest("[data-admstem]");
-    if (it) openAdmStem(it.dataset.admstem);
+    if (it) openAdmStem(it.dataset.admstem, false);    // 普通点击:保持全部视图
   };
   $("admProgress").textContent = "队列剩余:本轮重开 " + cnt.reopened + " 张 · 全部待决 " + cnt.all + " 张";
 }
-async function openAdmStem(stem) {
+async function openAdmStem(stem, focusMine) {
   state.admStem = stem;
   state.admFocus = null;
+  state.admFocusMine = !!focusMine;
   renderAdmList();
   $("admWork").classList.remove("hidden");
   $("admEmpty").classList.add("hidden");
@@ -1122,6 +1123,7 @@ async function openAdmStem(stem) {
     + d.candidates.map((c, i) => '<button class="btn btn-sm" data-admf="' + i + '" title="只看他的框">'
         + '<b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">' + esc(c.annotator) + "</b></button>").join("")
     + '<button class="btn btn-sm" data-admf="-2" title="只看原图不画框">原图</button>';
+
   $("admFocus").onclick = (e) => {
     const b = e.target.closest("[data-admf]");
     if (!b) return;
@@ -1137,12 +1139,21 @@ async function openAdmStem(stem) {
     (c.boxes || []).forEach((b) => { tally[b.code] = (tally[b.code] || 0) + 1; });
     const sum = c.is_empty ? "空图(无缺陷)"
       : Object.entries(tally).map(([c2, n2]) => CN(c2) + "×" + n2).join(" + ") || "无框";
+    const fresh = state.admFocusMine && c.annotator === state.me;
+    if (fresh) state.admFocus = i;                     // 自己刚提交的那份:画布默认只看它
     return '<div class="adm-cand"><div><b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">'
       + esc(c.annotator) + '</b><span class="hint inline">' + sum + "</span>"
+      + (fresh ? ' <b class="tag-info">你刚改的</b>' : "")
       + (d.final_id === c.id ? ' <b class="tag-ok">当前定稿</b>' : "") + "</div>"
       + '<span><button class="btn btn-sm" data-admedit="' + c.id + '" title="以这份为起点进标注页改两笔,提交后成为你的新候选">改这份</button> '
       + '<button class="btn btn-sm btn-primary" data-admfin="' + c.id + '">敲定为这份</button></span></div>';
   }).join("");
+  if (state.admFocus != null) {                        // 初始聚焦(刚改的那份)同步按钮态
+    document.querySelectorAll("#admFocus [data-admf]").forEach((x) => {
+      x.style.opacity = parseInt(x.dataset.admf, 10) === state.admFocus ? "1" : "0.55";
+    });
+  }
+  if (state.admFocus != null) drawAdm();               // 初始聚焦立即生效到画布
   $("admCands").onclick = async (e) => {
     const ed = e.target.closest("[data-admedit]");
     if (ed) {
