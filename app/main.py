@@ -756,20 +756,20 @@ def _active_claim(stem: str, exclude: str | None = None):
         return None
     return c
 
-
 @app.get("/api/admin/review-list")
 def admin_review_list(user: str = Depends(current_user)):
     """数据复核清单(实时计算,非快照):
     A=定稿带框但存在空候选(想改空未成); B=定稿空但之后有人加框;
-    L1=决策时点之后才落地的不同候选。已点「维持原判」且其后无新定稿的图不再出现。"""
+    L1=最近一次人工裁决之后仍存在不同候选(裁决即收口,旧分歧不再触发)。
+    已被人工裁决收口、且其后无新分歧的图不再出现。"""
     require_admin(user)
     conn = connect()
     try:
-        last_fin, last_keep = {}, {}          # stem -> {"id": 行id(维持判断), "at": 决策时间(迟到比较)}
-        for r in conn.execute("SELECT stem, id, created_at, event FROM settlements "
+        last_dec = {}                         # stem -> 最近一次人工裁决时间(敲定/维持)
+        for r in conn.execute("SELECT stem, created_at, event, note FROM settlements "
                               "WHERE event IN ('final','review') ORDER BY id"):
-            (last_fin if r["event"] == "final" else last_keep)[r["stem"]] = {
-                "id": r["id"], "at": r["created_at"]}
+            if r["event"] == "review" or r["note"].startswith("admin:"):
+                last_dec[r["stem"]] = r["created_at"]
         cands_by = collections.defaultdict(list)
         for r in conn.execute("SELECT id,stem,annotator,boxes_json,is_empty,submitted_at "
                               "FROM annotations WHERE revoked=0 ORDER BY submitted_at,id"):
@@ -780,36 +780,32 @@ def admin_review_list(user: str = Depends(current_user)):
         for img in conn.execute("SELECT stem, final_id FROM images "
                                 "WHERE final_id IS NOT NULL ORDER BY stem"):
             st = img["stem"]
-            if last_keep.get(st, {}).get("id", 0) > last_fin.get(st, {}).get("id", 0):
-                continue                                  # 已维持,且其后无新定稿
             cands = cands_by.get(st, [])
             fin = conn.execute("SELECT annotator,boxes_json,is_empty,submitted_at FROM annotations "
                                "WHERE id=? AND revoked=0", (img["final_id"],)).fetchone()
             if not fin:
                 continue
-            fempty = fin["is_empty"] == 1; fat = fin["submitted_at"]
+            fempty = fin["is_empty"] == 1
             fb = json.loads(fin["boxes_json"])
-            empty_c = [x for x in cands if x["empty"]]
-            boxed_new = [x for x in cands if (not x["empty"]) and x["at"] > fat]
-            dt = (last_fin.get(st) or {}).get("at")
-            late = [x for x in cands if dt and x["at"] > dt
-                    and (x["empty"] != fempty or not boxes_match(
-                        {"is_empty": x["empty"], "boxes_json": json.dumps(x["boxes"])}, fin))]
-
-
-            if st.startswith("V"):
-                print("DBG2", st, "fempty", fempty, "fat", fat,
-                      "boxed_new", [(x["id"], x["at"]) for x in boxed_new],
-                      "late", [(x["id"], x["at"]) for x in late], "dt", dt)
-            if not fempty and empty_c:
-                g, suggest = "A", empty_c[-1]
-            elif fempty and boxed_new:
-                g, suggest = "B", boxed_new[-1]
-            elif late:
-                g, suggest = "L1", late[-1]
-            else:
+            # 与当前定稿不一致的候选 = 意图分歧信号;但分歧若发生在最近一次人工裁决
+            # (管理台敲定/维持原判)之前,视为裁决时已看过并选择当前定稿——人工裁决即收口
+            dec_at = last_dec.get(st)
+            diffs = []
+            for x in cands:
+                if x["empty"] != fempty or not boxes_match(
+                        {"is_empty": x["empty"], "boxes_json": json.dumps(x["boxes"])}, fin):
+                    diffs.append(x)
+            unreviewed = [x for x in diffs if dec_at is None or x["at"] > dec_at]
+            if not unreviewed:
                 continue
-
+            un_e = [x for x in unreviewed if x["empty"]]
+            un_b = [x for x in unreviewed if not x["empty"]]
+            if (not fempty) and un_e:
+                g, suggest = "A", un_e[-1]
+            elif fempty and un_b:
+                g, suggest = "B", un_b[-1]
+            else:
+                g, suggest = "L1", unreviewed[-1]
             groups[g].append({"stem": st, "by": fin["annotator"], "empty": fempty,
                               "suggest": {"id": suggest["id"], "by": suggest["by"],
                                           "empty": suggest["empty"], "nbox": suggest["nbox"]},
@@ -817,7 +813,6 @@ def admin_review_list(user: str = Depends(current_user)):
         return {"groups": groups}
     finally:
         conn.close()
-
 
 class ReviewKeepBody(BaseModel):
     stem: str

@@ -855,3 +855,19 @@ def test_admin_review_list_keep_and_browse(client):
     assert sample["empty"] is True and sample["codes"] == [] and sample["cands"] >= 2
     assert client.get("/api/admin/review-list", headers=H("hce")).status_code == 403
     assert client.get("/api/admin/browse", headers=H("hce")).status_code == 403
+
+
+def test_admin_review_adjudicated_stays_closed(client):
+    """复核场景收口:「都不对」→ 自己标注提交 → 敲定自己的份 → 清单收口;
+    裁决之前已存在的旧分歧(别人的旧候选)不再重复触发。"""
+    stem = "img_11"   # 前一组用例已管理员敲定为 cmx 的 KD(带框)
+    submit(client, "zzq", stem, [B("KD", 12, 12, 40, 40)])   # 复核:自己画的版本
+    rv = client.get("/api/admin/candidates?stem=" + stem, headers=H("cmx")).json()
+    mine = next(c for c in rv["candidates"] if c["annotator"] == "zzq")
+    client.post("/api/admin/finalize", json={"stem": stem, "chosen_id": mine["id"],
+                 "reason": "复核:按我的标注定"}, headers=H("cmx"))
+    rl = client.get("/api/admin/review-list", headers=H("cmx")).json()["groups"]
+    assert not any(x["stem"] == stem for g in rl.values() for x in g), \
+        "人工敲定即收口:裁决前的旧分歧不再触发"
+    # 收口后管理台能力不变:仍可改判/维持,且依旧收口
+    client.post("/api/admin/review-keep", json={"stem": stem}, headers=H("cmx"))
