@@ -465,7 +465,7 @@ function stepQueue(delta) {
   loadStem(todo[state.qi].stem, false);
   preloadImages(todo.slice(state.qi + 1, state.qi + 3).map((o) => o.stem));   // 预取接下来两张
 }
-async function loadStem(stem, revise) {
+async function loadStem(stem, revise, preset) {
   const seq = (state.loadSeq = (state.loadSeq || 0) + 1);   // 加载序号:连点/慢网时只认最新一次
   clearTimeout(state.msgTimer);
   $("annMsg").classList.add("hidden");                       // 换图后不残留上一张的提示
@@ -491,7 +491,13 @@ async function loadStem(stem, revise) {
     $("cvStem").textContent = stem + " · 图片加载失败,点「跳过」或刷新重试";
   };
   img.src = "/api/image/" + stem + ".webp";
-  if (t.my_latest) {
+  if (preset) {
+    // 管理台「改这份」:以所选候选的框为起点改两笔,而非自己的旧记录
+    state.boxes = JSON.parse(JSON.stringify(preset.boxes || []));
+    state.isEmpty = !!preset.isEmpty;
+    $("ckEmpty").checked = state.isEmpty;
+    annMsg("已载入「" + (preset.from || "所选候选") + "」的框,改完提交即成为你的新候选", "ok");
+  } else if (t.my_latest) {
     state.boxes = JSON.parse(JSON.stringify(JSON.parse(t.my_latest.boxes_json)));
     state.isEmpty = !!t.my_latest.is_empty;
     $("ckEmpty").checked = state.isEmpty;
@@ -1134,9 +1140,18 @@ async function openAdmStem(stem) {
     return '<div class="adm-cand"><div><b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">'
       + esc(c.annotator) + '</b><span class="hint inline">' + sum + "</span>"
       + (d.final_id === c.id ? ' <b class="tag-ok">当前定稿</b>' : "") + "</div>"
-      + '<button class="btn btn-sm btn-primary" data-admfin="' + c.id + '">敲定为这份</button></div>';
+      + '<span><button class="btn btn-sm" data-admedit="' + c.id + '" title="以这份为起点进标注页改两笔,提交后成为你的新候选">改这份</button> '
+      + '<button class="btn btn-sm btn-primary" data-admfin="' + c.id + '">敲定为这份</button></span></div>';
   }).join("");
   $("admCands").onclick = async (e) => {
+    const ed = e.target.closest("[data-admedit]");
+    if (ed) {
+      const c2 = d.candidates.find((x) => x.id === parseInt(ed.dataset.admedit, 10));
+      state.reviseReturn = "admin";                    // 提交后回管理台继续敲定
+      document.querySelector('#nav button[data-view="annotate"]').click();
+      setTimeout(() => loadStem(stem, true, { boxes: c2.boxes, isEmpty: c2.is_empty, from: c2.annotator }), 50);
+      return;
+    }
     const b = e.target.closest("[data-admfin]");
     if (!b) return;
     const cid = parseInt(b.dataset.admfin, 10);
