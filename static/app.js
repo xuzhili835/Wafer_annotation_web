@@ -876,7 +876,8 @@ async function openReview(stem) {
         // 操作区拆两处:画布聚焦在上方,弃权/自画在候选卡下方(都在用的时候手边)
         const focusBtns = '<button class="btn btn-sm" data-focus="-1">全部</button>'
           + d.candidates.map((c, i) => '<button class="btn btn-sm" data-focus="' + i + '" title="只看他的框,标签不再互相遮挡">'
-            + '<b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">' + esc(c.anon) + "</b></button>").join("");
+            + '<b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">' + esc(c.anon) + "</b></button>").join("")
+          + '<button class="btn btn-sm" data-focus="-2" title="只看原图不画框,确认缺陷本身长什么样">原图</button>';
         const focusRow = '<div class="rv-actions"><div class="rv-row"><span class="rv-label">画布只看</span>'
           + focusBtns + "</div></div>";
         const opsRow = d.final ? "" : '<div class="rv-actions rv-ops-below"><div class="rv-row"><span class="rv-label">拿不准?</span>'
@@ -970,6 +971,7 @@ function rvMsg(t) {
   $("rvMsg").classList.remove("hidden");
 }
 function paintCands(g, d, focus) {
+  if (focus === -2) return;                          // 原图:一张框都不画,看缺陷本身
   const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
   d.candidates.forEach((c, i) => {
     const color = CAND_COLORS[i % CAND_COLORS.length];
