@@ -830,3 +830,28 @@ def test_admin_claim_advisory(client):
     assert r["by"] == "cmx", "第二人打开应收到 cmx 刚在处理的提醒"
     q = {o["stem"]: o for o in client.get("/api/admin/queue", headers=H("cmx")).json()["list"]}
     assert q["img_09"]["claim_by"] == "zj", "队列条目带当前占位人"
+
+
+def test_admin_review_list_keep_and_browse(client):
+    """数据复核清单(A/B 分组+维持原判抑制)与全库回看只读清单。"""
+    # A:img_00 定稿带框(X),zzq 补交空标注 → 进 A 组,建议敲定空候选
+    r = submit(client, "zzq", "img_00", [], empty=True)
+    rl = client.get("/api/admin/review-list", headers=H("cmx")).json()["groups"]
+    a = [x for x in rl["A"] if x["stem"] == "img_00"]
+    assert a and a[0]["suggest"]["empty"] is True, "A 组建议敲定空候选"
+    # 维持原判 → 清单隐去
+    client.post("/api/admin/review-keep", json={"stem": "img_00"}, headers=H("cmx"))
+    rl = client.get("/api/admin/review-list", headers=H("cmx")).json()["groups"]
+    assert not any(x["stem"] == "img_00" for x in rl["A"]), "维持后不再出现"
+    # B:img_01 定稿为空,之后 hce 加框 → 进 B 组,建议敲定加框候选
+    submit(client, "hce", "img_01", [B("HS", 20, 20, 80, 80)])
+    rl = client.get("/api/admin/review-list", headers=H("cmx")).json()["groups"]
+    b = [x for x in rl["B"] if x["stem"] == "img_01"]
+    assert b and b[0]["suggest"]["by"] == "hce" and b[0]["suggest"]["nbox"] == 1
+    # 回看:全部定稿图,含框明细与统计字段
+    br = client.get("/api/admin/browse", headers=H("cmx")).json()["list"]
+    assert len(br) >= 3
+    sample = next(x for x in br if x["stem"] == "img_01")
+    assert sample["empty"] is True and sample["codes"] == [] and sample["cands"] >= 2
+    assert client.get("/api/admin/review-list", headers=H("hce")).status_code == 403
+    assert client.get("/api/admin/browse", headers=H("hce")).status_code == 403

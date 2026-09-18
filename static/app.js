@@ -136,7 +136,7 @@ $("nav").addEventListener("click", async (e) => {
   if (b.dataset.view === "annotate") startTopPolling();
   else stopTopPolling();
   if (b.dataset.view === "review") { clearCmtBadge(); loadArb(); }
-  if (b.dataset.view === "admin") loadAdmin();
+  if (b.dataset.view === "admin") { state.admSec = "queue"; loadAdmin(); }
   if (b.dataset.view === "export") loadSeal();
 });
 
@@ -1040,7 +1040,11 @@ function redrawRv() {
 
 
 /* ---------- 管理台(线下仲裁工作台,管理员专用) ---------- */
-$("btnAdmRefresh").onclick = () => loadAdmin();
+$("btnAdmRefresh").onclick = () => {
+  if (state.admSec === "review") loadReview();
+  else if (state.admSec === "browse") loadBrowse();
+  else loadAdmin();
+};
 $("admGoDraw").onclick = () => {
   if (!state.admStem) return;
   state.reviseReturn = "admin";                        // 提交后回管理台继续敲定
@@ -1120,7 +1124,7 @@ function renderAdmList() {
   };
   $("admList").onclick = (e) => {
     const it = e.target.closest("[data-admstem]");
-    if (it) openAdmStem(it.dataset.admstem, false);    // 普通点击:保持全部视图
+    if (it) { state.admCtx = "queue"; state.admSuggest = null; openAdmStem(it.dataset.admstem, false); }
   };
   $("admProgress").textContent = "队列剩余:本轮重开 " + cnt.reopened + " 张 · 全部待决 " + cnt.all + " 张"
     + (mine.length ? " · 我的类别 " + list.length + " 张" : "");
@@ -1150,6 +1154,7 @@ async function openAdmStem(stem, focusMine) {
   const img = new Image();
   img.onload = () => { if (seq === state.admSeq) { state.admImg = img; drawAdm(); } };
   img.src = "/api/image/" + stem + ".webp";
+  $("admKeep").classList.toggle("hidden", state.admCtx !== "review");
   $("admFocus").innerHTML = '<button class="btn btn-sm" data-admf="-1">全部</button>'
     + d.candidates.map((c, i) => '<button class="btn btn-sm" data-admf="' + i + '" title="只看他的框">'
         + '<b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">' + esc(c.annotator) + "</b></button>").join("")
@@ -1175,7 +1180,8 @@ async function openAdmStem(stem, focusMine) {
     return '<div class="adm-cand"><div><b style="color:' + CAND_COLORS[i % CAND_COLORS.length] + '">'
       + esc(c.annotator) + '</b><span class="hint inline">' + sum + "</span>"
       + (fresh ? ' <b class="tag-info">你刚改的</b>' : "")
-      + (d.final_id === c.id ? ' <b class="tag-ok">当前定稿</b>' : "") + "</div>"
+      + (d.final_id === c.id ? ' <b class="tag-ok">当前定稿</b>' : "")
+      + (state.admCtx === "review" && state.admSuggest === c.id ? ' <b class="tag-info">建议敲定这份</b>' : "") + "</div>"
       + '<span><button class="btn btn-sm" data-admedit="' + c.id + '" title="以这份为起点进标注页改两笔,提交后成为你的新候选">改这份</button> '
       + '<button class="btn btn-sm btn-primary" data-admfin="' + c.id + '">敲定为这份</button></span></div>';
   }).join("");
@@ -1203,15 +1209,27 @@ async function openAdmStem(stem, focusMine) {
     try {
       await api("/api/admin/finalize", { json: { stem, chosen_id: cid, reason: $("admReason").value.trim() } });
       $("admReason").value = "";
-      const remain = (state.admQueue || []).filter((o) => o.stem !== stem
-        && (state.admTab === "all" || o.reopened));
-      await loadAdmin();
-      const next = remain.length ? remain[0].stem : null;
-      if (next) openAdmStem(next);
-      else {
-        $("admWork").classList.add("hidden");
-        $("admEmpty").classList.remove("hidden");
-        $("admTitle").textContent = "从左侧选一张图";
+      if (state.admCtx === "review") {
+        const done = stem;
+        await loadReview();
+        const next = (state.admReviewItems || []).find((s2) => s2 !== done);
+        if (next) openAdmStem(next);
+        else {
+          $("admWork").classList.add("hidden");
+          $("admEmpty").classList.remove("hidden");
+          $("admTitle").textContent = "复核清单已清零,干得漂亮!";
+        }
+      } else {
+        const remain = (state.admQueue || []).filter((o) => o.stem !== stem
+          && (state.admTab === "all" || o.reopened));
+        await loadAdmin();
+        const next = remain.length ? remain[0].stem : null;
+        if (next) openAdmStem(next);
+        else {
+          $("admWork").classList.add("hidden");
+          $("admEmpty").classList.remove("hidden");
+          $("admTitle").textContent = "从左侧选一张图";
+        }
       }
     } catch (err) { $("admProgress").textContent = "敲定失败:" + err.message; }
   };
@@ -1256,6 +1274,168 @@ makeZoomable(document.querySelector(".canvas-wrap"), cv);                  // �
 makeZoomable(document.querySelector(".canvas-wrap.small"), $("rv"));       // 盲审面板画布
 makeZoomable(document.querySelector(".adm-canvas-wrap"), $("admCv"));      // 管理台裁定区画布
 
+
+/* ---------- 数据复核 + 全库回看(管理台页签) ---------- */
+$("admTabs").onclick = (e) => {
+  const b = e.target.closest("[data-admsec]");
+  if (!b) return;
+  state.admSec = b.dataset.admsec;
+  document.querySelectorAll("#admTabs [data-admsec]").forEach((x) => x.classList.toggle("on", x === b));
+  const sec = state.admSec;
+  $("admSecReopen").classList.toggle("hidden", sec !== "queue");
+  $("admGridDiv").classList.toggle("hidden", sec === "browse");
+  $("admQWrap").classList.toggle("hidden", sec !== "queue");
+  $("admRWrap").classList.toggle("hidden", sec !== "review");
+  $("admSecBrowse").classList.toggle("hidden", sec !== "browse");
+  $("admProgress").classList.toggle("hidden", sec === "browse");
+  if (sec === "review") loadReview();
+  if (sec === "browse") loadBrowse();
+};
+$("admKeep").onclick = async () => {
+  if (!state.admStem) return;
+  if (!confirm("确认维持「" + state.admStem + "」的当前定稿?(记一条复核留痕,清单移除)")) return;
+  try {
+    await api("/api/admin/review-keep", { json: { stem: state.admStem } });
+    const done = state.admStem;
+    await loadReview();
+    const next = (state.admReviewItems || []).find((s) => s !== done);
+    if (next) openAdmStem(next);
+    else { $("admTitle").textContent = "复核清单已清零,干得漂亮!"; $("admWork").classList.add("hidden"); $("admEmpty").classList.remove("hidden"); }
+  } catch (err) { $("admProgress").textContent = "维持失败:" + err.message; }
+};
+
+async function loadReview() {
+  const r = await api("/api/admin/review-list");
+  state.admReviewGroups = r.groups;
+  state.admReviewItems = [...r.groups.A, ...r.groups.B, ...r.groups.L1].map((o) => o.stem);
+  state.admReviewSuggest = {};
+  ["A", "B", "L1"].forEach((k) => r.groups[k].forEach((o) => { state.admReviewSuggest[o.stem] = o.suggest.id; }));
+  renderReview();
+}
+
+const RV_GROUPS = [
+  ["A", "想改空未成", "有人交过空标注(改判无缺陷),但定稿被多数顶回带框——确认后敲定空图候选"],
+  ["B", "定稿空但之后有人加框", "定稿是无缺陷,之后有人交了带框候选——看一眼那份框,该敲就敲"],
+  ["L1", "决策后迟到的新候选", "敲定之后才落地的新候选,没人看过——维持或敲定"],
+];
+
+function renderReview() {
+  const g = state.admReviewGroups || { A: [], B: [], L1: [] };
+  const total = g.A.length + g.B.length + g.L1.length;
+  $("admRevN").textContent = String(total);
+  $("admRNote").innerHTML = RV_GROUPS.filter(([k]) => g[k].length).map(([k, title, note]) =>
+    '<b>' + title + '(' + g[k].length + ')</b>:' + note).join('<br>');
+  $("admRList").innerHTML = total
+    ? RV_GROUPS.filter(([k]) => g[k].length).map(([k]) => '<div class="arb-group"><span>'
+        + k + " 组(" + g[k].length + ')</span></div>'
+        + g[k].map((o) => '<div class="arb-item' + (state.admStem === o.stem ? " active" : "")
+          + '" data-rvitem="' + esc(o.stem) + '"><code>' + esc(o.stem) + "</code><span>"
+          + (o.empty ? "空图定稿" : "带框定稿") + "</span></div>").join("")).join("")
+    : '<p class="hint">清单已清零。</p>';
+  $("admRList").onclick = (e) => {
+    const it = e.target.closest("[data-rvitem]");
+    if (!it) return;
+    state.admCtx = "review";
+    state.admSuggest = state.admReviewSuggest[it.dataset.rvitem] || null;
+    openAdmStem(it.dataset.rvitem);
+  };
+  if (state.admCtx === "review" && state.admStem) $("admKeep").classList.remove("hidden");
+}
+
+async function loadBrowse() {
+  const r = await api("/api/admin/browse");
+  state.bkAll = r.list;
+  state.bkFilter = "all";
+  renderBrowse();
+}
+
+function bkList() {
+  const all = state.bkAll || [];
+  const f = state.bkFilter || "all";
+  if (f === "empty") return all.filter((x) => x.empty);
+  if (f === "boxed") return all.filter((x) => !x.empty);
+  if (f.startsWith("c:")) return all.filter((x) => x.codes.includes(f.slice(2)));
+  if (f === "random") return [...all].sort(() => Math.random() - 0.5).slice(0, 20);
+  if (f === "busy") return [...all].sort((a, b) => (b.hist - a.hist) || (b.cands - a.cands)).slice(0, 20);
+  return all;
+}
+
+function renderBrowse() {
+  const all = state.bkAll || [];
+  const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
+  const clsCnt = {};
+  all.forEach((x) => x.codes.forEach((c) => { clsCnt[c] = (clsCnt[c] || 0) + 1; }));
+  const F = (k, label, n) => '<button class="chip2' + (state.bkFilter === k ? " on" : "")
+    + '" data-bkfilter="' + k + '">' + label + " " + (n == null ? "" : n) + "</button>";
+  $("bkFilters").innerHTML =
+    F("all", "全部", all.length) + F("boxed", "有框", all.filter((x) => !x.empty).length)
+    + F("empty", "空图", all.filter((x) => x.empty).length)
+    + Object.entries(clsCnt).sort((a, b) => b[1] - a[1]).map(([c, n]) => F("c:" + c, CN(c), n)).join("")
+    + F("random", "随机抽查 20") + F("busy", "改动最多 20");
+  const items = bkList();
+  const grid = $("bkGrid");
+  grid.innerHTML = "";
+  items.forEach((o) => {
+    const cell = document.createElement("div");
+    cell.className = "vf-cell";
+    cell.innerHTML = '<canvas width="160" height="160"></canvas>'
+      + '<div class="vf-cell-meta"><span>' + esc(o.stem) + "</span><span>"
+      + (o.empty ? "空图" : o.nbox + "框") + "</span></div>";
+    cell.title = "定稿:" + o.by + " · 候选 " + o.cands + " · 留痕 " + o.hist + " · 点击放大";
+    cell.onclick = () => bkShow(o);
+    grid.appendChild(cell);
+    const g = cell.querySelector("canvas").getContext("2d");
+    g.fillStyle = "#0b1220"; g.fillRect(0, 0, 160, 160);
+    if (o.empty) { g.fillStyle = "#94a3b8"; g.font = "13px sans-serif"; g.textAlign = "center"; g.fillText("空图", 80, 84); g.textAlign = "left"; }
+    const k = 160 / 640;
+    o.boxes.forEach((b, i2) => {
+      const color = (state.meta.colors && state.meta.colors[b.code]) || CAND_COLORS[i2 % CAND_COLORS.length];
+      g.strokeStyle = color; g.lineWidth = 2;
+      g.strokeRect(b.x0 * k, b.y0 * k, (b.x1 - b.x0) * k, (b.y1 - b.y0) * k);
+    });
+    const img = new Image();
+    img.onload = () => {
+      g.fillStyle = "#0b1220"; g.fillRect(0, 0, 160, 160);
+      g.drawImage(img, 0, 0, 160, 160);
+      o.boxes.forEach((b, i3) => {
+        const color = (state.meta.colors && state.meta.colors[b.code]) || CAND_COLORS[i3 % CAND_COLORS.length];
+        g.strokeStyle = color; g.lineWidth = 2;
+        g.strokeRect(b.x0 * k, b.y0 * k, (b.x1 - b.x0) * k, (b.y1 - b.y0) * k);
+      });
+    };
+    img.src = "/api/image/" + o.stem + ".webp";
+  });
+}
+$("bkFilters").onclick = (e) => {
+  const b = e.target.closest("[data-bkfilter]");
+  if (b) { state.bkFilter = b.dataset.bkfilter; renderBrowse(); }
+};
+function bkShow(o) {
+  $("bkDetail").classList.remove("hidden");
+  $("bkCv").scrollIntoView({ block: "center" });
+  const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
+  const tally = {};
+  o.boxes.forEach((b) => { tally[b.code] = (tally[b.code] || 0) + 1; });
+  $("bkTitle").textContent = o.stem + " · 定稿:" + o.by + " · 候选 " + o.cands + " · 留痕 " + o.hist;
+  $("bkTags").innerHTML = (o.empty
+    ? '<b class="tag-info">空图负样本</b>'
+    : Object.entries(tally).map(([c, n]) => '<b class="tag-ok">' + CN(c) + "×" + n + "</b>").join(" "))
+    + ' <b class="tag-warn">只读</b>';
+  const g = $("bkCv").getContext("2d");
+  const draw = (img) => {
+    g.fillStyle = "#0b1220"; g.fillRect(0, 0, 640, 640);
+    if (img) g.drawImage(img, 0, 0, 640, 640);
+    o.boxes.forEach((b, i2) => {
+      const color = (state.meta.colors && state.meta.colors[b.code]) || CAND_COLORS[i2 % CAND_COLORS.length];
+      drawRect(g, b, color, 3, CN(b.code), 0);
+    });
+  };
+  draw(null);
+  const img = new Image();
+  img.onload = () => draw(img);
+  img.src = "/api/image/" + o.stem + ".webp";
+}
+$("bkBack").onclick = () => { $("bkDetail").classList.add("hidden"); };
 
 /* ---------- 打包前本地校验(拖入文件夹,纯本地不上传;总览网格 + 单张放大) ---------- */
 const vf = { items: [], idx: 0, img: null, url: null, filter: "all", pending: 0 };

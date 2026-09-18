@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import collections
 import json
 from collections import Counter
 from datetime import datetime
@@ -754,6 +755,114 @@ def _active_claim(stem: str, exclude: str | None = None):
     if exclude and c["user"] == exclude:
         return None
     return c
+
+
+@app.get("/api/admin/review-list")
+def admin_review_list(user: str = Depends(current_user)):
+    """数据复核清单(实时计算,非快照):
+    A=定稿带框但存在空候选(想改空未成); B=定稿空但之后有人加框;
+    L1=决策时点之后才落地的不同候选。已点「维持原判」且其后无新定稿的图不再出现。"""
+    require_admin(user)
+    conn = connect()
+    try:
+        last_fin, last_keep = {}, {}          # stem -> {"id": 行id(维持判断), "at": 决策时间(迟到比较)}
+        for r in conn.execute("SELECT stem, id, created_at, event FROM settlements "
+                              "WHERE event IN ('final','review') ORDER BY id"):
+            (last_fin if r["event"] == "final" else last_keep)[r["stem"]] = {
+                "id": r["id"], "at": r["created_at"]}
+        cands_by = collections.defaultdict(list)
+        for r in conn.execute("SELECT id,stem,annotator,boxes_json,is_empty,submitted_at "
+                              "FROM annotations WHERE revoked=0 ORDER BY submitted_at,id"):
+            o = json.loads(r["boxes_json"])
+            cands_by[r["stem"]].append({"id": r["id"], "by": r["annotator"],
+                "empty": bool(r["is_empty"]), "nbox": len(o), "at": r["submitted_at"], "boxes": o})
+        groups = {"A": [], "B": [], "L1": []}
+        for img in conn.execute("SELECT stem, final_id FROM images "
+                                "WHERE final_id IS NOT NULL ORDER BY stem"):
+            st = img["stem"]
+            if last_keep.get(st, {}).get("id", 0) > last_fin.get(st, {}).get("id", 0):
+                continue                                  # 已维持,且其后无新定稿
+            cands = cands_by.get(st, [])
+            fin = conn.execute("SELECT annotator,boxes_json,is_empty,submitted_at FROM annotations "
+                               "WHERE id=? AND revoked=0", (img["final_id"],)).fetchone()
+            if not fin:
+                continue
+            fempty = fin["is_empty"] == 1; fat = fin["submitted_at"]
+            fb = json.loads(fin["boxes_json"])
+            empty_c = [x for x in cands if x["empty"]]
+            boxed_new = [x for x in cands if (not x["empty"]) and x["at"] > fat]
+            dt = (last_fin.get(st) or {}).get("at")
+            late = [x for x in cands if dt and x["at"] > dt
+                    and (x["empty"] != fempty or not boxes_match(
+                        {"is_empty": x["empty"], "boxes_json": json.dumps(x["boxes"])}, fin))]
+
+
+            if st.startswith("V"):
+                print("DBG2", st, "fempty", fempty, "fat", fat,
+                      "boxed_new", [(x["id"], x["at"]) for x in boxed_new],
+                      "late", [(x["id"], x["at"]) for x in late], "dt", dt)
+            if not fempty and empty_c:
+                g, suggest = "A", empty_c[-1]
+            elif fempty and boxed_new:
+                g, suggest = "B", boxed_new[-1]
+            elif late:
+                g, suggest = "L1", late[-1]
+            else:
+                continue
+
+            groups[g].append({"stem": st, "by": fin["annotator"], "empty": fempty,
+                              "suggest": {"id": suggest["id"], "by": suggest["by"],
+                                          "empty": suggest["empty"], "nbox": suggest["nbox"]},
+                              "cands": [{k: x[k] for k in ("id", "by", "empty", "nbox", "at")} for x in cands]})
+        return {"groups": groups}
+    finally:
+        conn.close()
+
+
+class ReviewKeepBody(BaseModel):
+    stem: str
+    reason: str = ""
+
+
+@app.post("/api/admin/review-keep")
+def admin_review_keep(body: ReviewKeepBody, user: str = Depends(current_user)):
+    """维持原判:记录"这张复核过、没问题",从复核清单隐去;其后若又有新定稿会重新出现。"""
+    require_admin(user)
+    conn = connect()
+    try:
+        if not conn.execute("SELECT 1 FROM images WHERE stem=?", (body.stem,)).fetchone():
+            raise HTTPException(404, "没有这张图")
+        conn.execute("INSERT INTO settlements(stem,event,round,final_id,tallies,note) "
+                     "VALUES(?,'review',(SELECT COALESCE(MAX(round),1) FROM disputes WHERE stem=?),NULL,NULL,?)",
+                     (body.stem, body.stem, f"admin:{user}:{body.reason.strip() or '维持原判'}"))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.get("/api/admin/browse")
+def admin_browse(user: str = Depends(current_user)):
+    """全库回看(只读):全部定稿图清单,含定稿框/类别/候选数/改动次数,供前端筛选与抽查。"""
+    require_admin(user)
+    conn = connect()
+    try:
+        cands_n = {r["stem"]: r["n"] for r in conn.execute(
+            "SELECT stem, COUNT(*) n FROM annotations WHERE revoked=0 GROUP BY stem")}
+        hist_n = {r["stem"]: r["n"] for r in conn.execute(
+            "SELECT stem, COUNT(*) n FROM settlements GROUP BY stem")}
+        out = []
+        for r in conn.execute("SELECT i.stem, i.w, i.h, a.annotator, a.boxes_json, a.is_empty "
+                              "FROM images i JOIN annotations a ON a.id=i.final_id "
+                              "WHERE i.final_id IS NOT NULL ORDER BY i.stem"):
+            boxes = json.loads(r["boxes_json"])
+            out.append({"stem": r["stem"], "by": r["annotator"], "empty": bool(r["is_empty"]),
+                        "boxes": boxes, "codes": sorted({b["code"] for b in boxes}),
+                        "nbox": len(boxes), "cands": cands_n.get(r["stem"], 0),
+                        "hist": hist_n.get(r["stem"], 0)})
+        return {"list": out}
+    finally:
+        conn.close()
 
 
 class ClaimBody(BaseModel):

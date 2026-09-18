@@ -185,15 +185,27 @@
       <div class="topbar"><div><h1>管理台 <span class="pill todo">线下会专用</span></h1>
         <p>批量打回 → 逐张敲定,当场拍板不走投票;每一步留痕,可查可审计。</p></div>
         <div class="toolbar"><button class="btn" id="btnAdmRefresh">刷新</button></div></div>
-      <div class="card">
+      <div class="arb-chips" id="admTabs">
+        <button class="chip2 on" data-admsec="queue">打回与队列</button>
+        <button class="chip2" data-admsec="review">数据复核 <span id="admRevN" class="pill todo">0</span></button>
+        <button class="chip2" data-admsec="browse">全库回看(只读)</button>
+      </div>
+      <div class="card" id="admSecReopen">
         <h2>① 批量打回已定稿 <span class="hint inline">按当前定稿的缺陷类别整批打回,一次一类;打回后进下方「本轮重开」队列</span></h2>
         <div id="admReopen" class="adm-reopen"><p class="hint">加载中…</p></div>
       </div>
-      <div class="adm-grid">
+      <div class="adm-grid" id="admGridDiv">
         <div class="card adm-list">
-          <h2>② 裁定队列</h2>
-          <div class="arb-chips" id="admChips"></div>
-          <div id="admList" class="adm-items"></div>
+          <div id="admQWrap">
+            <h2>② 裁定队列</h2>
+            <div class="arb-chips" id="admChips"></div>
+            <div id="admList" class="adm-items"></div>
+          </div>
+          <div id="admRWrap" class="hidden">
+            <h2>④ 复核分组</h2>
+            <div id="admRNote" class="hint"></div>
+            <div id="admRList" class="adm-items"></div>
+          </div>
         </div>
         <div class="card adm-panel">
           <h2>③ 裁定区 <span id="admTitle" class="hint inline">从左侧选一张图</span></h2>
@@ -206,13 +218,32 @@
               <div class="rv-row"><span class="rv-label">原因(可选)</span>
                 <input id="admReason" type="text" autocomplete="off" placeholder="默认:线下会裁定" /></div>
               <div id="admCands"></div>
-              <div class="toolbar"><button class="btn btn-sm" id="admGoDraw">都不全/都不对?去画一份 →</button></div>
+              <div class="toolbar">
+                <button class="btn btn-sm hidden" id="admKeep">维持原判(看完没问题)</button>
+                <button class="btn btn-sm" id="admGoDraw">都不全/都不对?去画一份 →</button>
+              </div>
             </div>
           </div>
           <p id="admEmpty" class="hint">从左侧队列选一张图开始裁定。</p>
         </div>
       </div>
       <p class="hint" id="admProgress"></p>
+      </div>
+      <div class="card hidden" id="admSecBrowse">
+        <h2>全库回看(只读) <span class="hint inline">按类别浏览 / 随机抽查 / 改动最多优先;只看不可标,训练前把全库过一遍</span></h2>
+        <div class="arb-chips" id="bkFilters"></div>
+        <div id="bkGrid" class="vf-grid"></div>
+        <div id="bkDetail" class="hidden">
+          <div class="toolbar"><button class="btn btn-sm" id="bkBack">← 返回总览</button></div>
+          <div class="vf-layout">
+            <div class="vf-canvas-wrap"><canvas id="bkCv" width="640" height="640"></canvas></div>
+            <div class="vf-side">
+              <div><b id="bkTitle"></b><div id="bkTags"></div></div>
+              <p class="hint">只读回看:此处不提供标注;要改请回「数据复核」或走管理台裁定流程。</p>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- 帮助视图 -->
@@ -245,6 +276,6 @@
 <!-- 图片放大模态 -->
 <div id="lightbox" class="lightbox hidden"><img id="lightboxImg" alt="" /></div>
 
-<script src="/static/app.js?v=046"></script>
+<script src="/static/app.js?v=047"></script>
 </body>
 </html>
