@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="%230f766e"/><text x="16" y="21" font-size="12" font-weight="800" text-anchor="middle" fill="white" font-family="Segoe UI,sans-serif">W</text></svg>' />
 <title>光伏硅片标注站 · Wafer Annotation</title>
-<link rel="stylesheet" href="/static/style.css?v=022" />
+<link rel="stylesheet" href="/static/style.css?v=023" />
 </head>
 <body>
 
@@ -148,6 +148,26 @@
       <div class="card"><h2>VOC XML 包 voc_xml.zip</h2>
         <p class="hint">只含已定稿图,与测试集 XML 同格式 —— 解压与图片同目录即可喂 <code>wafer.prepare</code> 训练。</p>
         <button class="btn btn-primary" data-exp="voc_xml.zip">下载 XML 包</button></div>
+      <div class="card">
+        <h2>打包前本地校验 <span class="hint inline">解压下载的 zip,把整个文件夹拖到下面逐张过一遍;纯本地进行,文件不经过服务器</span></h2>
+        <div id="vfDrop" class="vf-drop">把解压后的文件夹拖到这里,或点击选择文件夹(认 PNG + 同名 XML)</div>
+        <input type="file" id="vfInput" webkitdirectory multiple hidden />
+        <div id="vfSummary" class="hidden"></div>
+        <div id="vfViewer" class="hidden">
+          <div class="vf-layout">
+            <div class="vf-canvas-wrap"><canvas id="vfCv" width="640" height="640"></canvas></div>
+            <div class="vf-side">
+              <div><b id="vfTitle"></b><div id="vfTags"></div></div>
+              <div class="toolbar">
+                <button class="btn" id="vfPrev">← 上一张</button>
+                <button class="btn btn-primary" id="vfNext">下一张 →</button>
+              </div>
+              <div id="vfIssues" class="hidden"></div>
+              <p class="hint">←/→ 方向键翻张;Ctrl+滚轮缩放,双击复位。有问题(缺配对/越界/未知类别)会在上方汇总,点条目直达。</p>
+            </div>
+          </div>
+        </div>
+      </div>
       <div class="card" id="sealCard">
         <h2>封板 <span id="sealPill" class="pill todo">未封板</span></h2>
         <p class="hint">训练只认封板后的里程碑终版。任意一人发起,4 人中 3 人同意即锁定。</p>
@@ -221,6 +241,6 @@
 <!-- 图片放大模态 -->
 <div id="lightbox" class="lightbox hidden"><img id="lightboxImg" alt="" /></div>
 
-<script src="/static/app.js?v=044"></script>
+<script src="/static/app.js?v=045"></script>
 </body>
 </html>

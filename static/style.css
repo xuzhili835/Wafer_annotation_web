@@ -245,3 +245,14 @@ ul.rv-rules li{margin:4px 0}
 .adm-side{display:flex;flex-direction:column;gap:8px}
 .adm-cand{display:flex;align-items:center;justify-content:space-between;gap:8px;
   border:1px solid var(--line);border-radius:10px;padding:6px 10px;background:#fff}
+
+/* ---------- 打包前本地校验(拖文件夹,纯本地) ---------- */
+.vf-drop{border:2px dashed var(--line);border-radius:12px;padding:18px;text-align:center;
+  cursor:pointer;color:var(--muted);margin-bottom:8px}
+.vf-drop:hover,.vf-drop.on{border-color:var(--primary);background:var(--pass-soft)}
+.vf-layout{display:grid;grid-template-columns:minmax(280px,400px) 1fr;gap:14px;align-items:start}
+#vfCv{width:100%;aspect-ratio:1/1;border-radius:12px;background:#0b1220}
+.vf-side{display:flex;flex-direction:column;gap:8px}
+.vf-issue{cursor:pointer;padding:2px 0}
+.vf-issue:hover{color:var(--primary)}
+#vfSummary p{margin:2px 0}

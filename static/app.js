@@ -1256,6 +1256,159 @@ makeZoomable(document.querySelector(".canvas-wrap"), cv);                  // �
 makeZoomable(document.querySelector(".canvas-wrap.small"), $("rv"));       // 盲审面板画布
 makeZoomable(document.querySelector(".adm-canvas-wrap"), $("admCv"));      // 管理台裁定区画布
 
+
+/* ---------- 打包前本地校验(拖入文件夹,纯本地不上传) ---------- */
+const vf = { items: [], idx: 0, img: null, url: null };
+
+$("vfDrop").onclick = () => $("vfInput").click();
+$("vfInput").onchange = async (e) => { if (e.target.files.length) await startVf([...e.target.files]); };
+$("vfDrop").addEventListener("dragover", (e) => { e.preventDefault(); $("vfDrop").classList.add("on"); });
+$("vfDrop").addEventListener("dragleave", () => $("vfDrop").classList.remove("on"));
+$("vfDrop").addEventListener("drop", async (e) => {
+  e.preventDefault();
+  $("vfDrop").classList.remove("on");
+  const files = await vfCollect(e.dataTransfer);
+  if (files.length) await startVf(files);
+});
+$("vfPrev").onclick = () => vfStep(-1);
+$("vfNext").onclick = () => vfStep(1);
+document.addEventListener("keydown", (e) => {
+  if ($("vfViewer").classList.contains("hidden")) return;
+  if (e.target && ["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+  if (e.key === "ArrowRight") vfStep(1);
+  if (e.key === "ArrowLeft") vfStep(-1);
+});
+
+async function vfCollect(dt) {
+  const roots = [];
+  for (const it of dt.items) {
+    const entry = it.webkitGetAsEntry && it.webkitGetAsEntry();
+    if (entry) roots.push(entry);                    // dataTransfer 在 await 后失效,先同步取完
+  }
+  const files = [];
+  async function walk(entry) {
+    if (!entry) return;
+    if (entry.isFile) {
+      const f = await new Promise((res) => entry.file(res, () => {}));
+      if (f) files.push(f);
+    } else if (entry.isDirectory) {
+      const rd = entry.createReader();
+      for (;;) {
+        const batch = await new Promise((res) => rd.readEntries(res, () => res([])));
+        if (!batch.length) break;
+        for (const e2 of batch) await walk(e2);
+      }
+    }
+  }
+  for (const e of roots) await walk(e);
+  return files;
+}
+
+async function vfLoad(files) {
+  const map = {};
+  for (const f of files) {
+    const ext = f.name.split(".").pop().toLowerCase();
+    const stem = f.name.replace(/\.[^.]+$/, "");
+    map[stem] = map[stem] || {};
+    if (ext === "png") map[stem].img = f;
+    else if (ext === "xml") map[stem].xml = f;
+  }
+  const items = [];
+  for (const stem of Object.keys(map)) {
+    const m = map[stem];
+    if (!m.img && !m.xml) continue;
+    const it = { stem, img: m.img || null, xml: m.xml || null, boxes: [], w: 0, h: 0, issues: [] };
+    if (!m.img) it.issues.push("缺图片");
+    if (!m.xml) { it.issues.push("缺XML"); items.push(it); continue; }
+    try {
+      const doc = new DOMParser().parseFromString(await m.xml.text(), "text/xml");
+      if (doc.querySelector("parsererror")) throw new Error("bad xml");
+      const size = doc.querySelector("size");
+      it.w = size ? parseInt(size.querySelector("width").textContent, 10) : 0;
+      it.h = size ? parseInt(size.querySelector("height").textContent, 10) : 0;
+      doc.querySelectorAll("object").forEach((o) => {
+        const g = (t) => parseInt((o.querySelector(t) || { textContent: "0" }).textContent, 10);
+        it.boxes.push({ code: (o.querySelector("name") || { textContent: "?" }).textContent,
+                        x0: g("xmin"), y0: g("ymin"), x1: g("xmax"), y1: g("ymax") });
+      });
+    } catch (e2) { it.issues.push("XML 解析失败"); items.push(it); continue; }
+    for (const b of it.boxes) {
+      if (!(0 <= b.x0 && b.x0 <= b.x1 && b.x1 <= it.w)) it.issues.push("X坐标越界/倒置");
+      if (!(0 <= b.y0 && b.y0 <= b.y1 && b.y1 <= it.h)) it.issues.push("Y坐标越界/倒置");
+      if (state.meta.names && !state.meta.names[b.code]) it.issues.push("未知类别 " + b.code);
+    }
+    items.push(it);
+  }
+  items.sort((a, b) => (a.stem < b.stem ? -1 : 1));
+  return items;
+}
+
+async function startVf(files) {
+  vf.items = await vfLoad(files);
+  vf.idx = 0;
+  const bad = vf.items.filter((x) => x.issues.length);
+  const emptyN = vf.items.filter((x) => !x.issues.length && !x.boxes.length).length;
+  $("vfSummary").classList.remove("hidden");
+  const CN = (c) => (state.meta.names && state.meta.names[c]) || c;
+  $("vfSummary").innerHTML =
+    '<p><b>' + vf.items.length + "</b> 个条目 · 空图负样本 " + emptyN
+    + " · " + (bad.length ? '<b class="tag-warn">问题 ' + bad.length + "</b>" : '<b class="tag-ok">全部干净 ✓</b>') + "</p>"
+    + (bad.length
+        ? bad.map((x) => '<p class="vf-issue" data-vfjump="' + esc(x.stem) + '"><b>' + esc(x.stem) + "</b> · "
+            + [...new Set(x.issues)].join(";") + "</p>").join("")
+        : "");
+  $("vfIssues").innerHTML = "";
+  $("vfViewer").classList.remove("hidden");
+  if (vf.items.length) await vfShow(0);
+}
+document.addEventListener("click", (e) => {
+  const j = e.target.closest("[data-vfjump]");
+  if (!j) return;
+  const i = vf.items.findIndex((x) => x.stem === j.dataset.vfjump);
+  if (i >= 0) vfShow(i);
+});
+
+function vfStep(d) {
+  if (!vf.items.length) return;
+  vfShow((vf.idx + d + vf.items.length) % vf.items.length);
+}
+
+async function vfShow(i) {
+  vf.idx = i;
+  const it = vf.items[i];
+  if (!it) return;
+  const CN = (c) => (state.meta.names && state.meta.names[c]) || c;
+  const tally = {};
+  it.boxes.forEach((b) => { tally[b.code] = (tally[b.code] || 0) + 1; });
+  $("vfTitle").textContent = it.stem + "  (" + (i + 1) + "/" + vf.items.length + ")";
+  $("vfTags").innerHTML = (it.boxes.length
+      ? Object.entries(tally).map(([c, n]) => '<b class="tag-ok">' + CN(c) + "×" + n + "</b>").join(" ")
+      : '<b class="tag-info">空图负样本</b>')
+    + (it.issues.length ? " " + [...new Set(it.issues)].map((x) => '<b class="tag-warn">' + esc(x) + "</b>").join(" ") : "");
+  if (vf.url) { URL.revokeObjectURL(vf.url); vf.url = null; }
+  vf.img = null;
+  if (it.img) {
+    vf.url = URL.createObjectURL(it.img);
+    const img = new Image();
+    img.onload = () => { vf.img = img; drawVf(it); };
+    img.onerror = () => drawVf(it);
+    img.src = vf.url;
+  } else drawVf(it);
+}
+
+function drawVf(it) {
+  const g = $("vfCv").getContext("2d");
+  g.clearRect(0, 0, 640, 640);
+  g.fillStyle = "#0b1220";
+  g.fillRect(0, 0, 640, 640);
+  if (vf.img) g.drawImage(vf.img, 0, 0, 640, 640);
+  (it.boxes || []).forEach((b, i2) => {
+    const color = (state.meta.colors && state.meta.colors[b.code]) || CAND_COLORS[i2 % CAND_COLORS.length];
+    drawRect(g, b, color, 3, (state.meta.names && state.meta.names[b.code]) || b.code, 0);
+  });
+}
+makeZoomable($("vfCv").parentElement, $("vfCv"));
+
 /* ---------- 导出与封板 ---------- */
 document.querySelectorAll("[data-exp]").forEach((b) => {
   b.onclick = async () => {
