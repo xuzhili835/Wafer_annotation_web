@@ -143,6 +143,17 @@ $("nav").addEventListener("click", async (e) => {
 
 /* ---------- 启动 ---------- */
 async function bootApp() {
+  try {
+    await bootAppInner();
+  } catch (err) {
+    const verTag = document.querySelector('script[src*="app.js"]');
+    const v = verTag ? verTag.src.split("v=")[1] : "?";
+    if ($("appVer")) $("appVer").textContent = "初始化失败(" + v + "): " + err.message;
+    $("loginLayer").classList.remove("hidden");
+    if ($("loginMsg")) { $("loginMsg").textContent = "初始化失败: " + err.message; $("loginMsg").classList.remove("hidden"); }
+  }
+}
+async function bootAppInner() {
   state.meta = await api("/api/meta");
   const verTag = document.querySelector('script[src*="app.js"]');
   if (verTag && $("appVer")) $("appVer").textContent = "脚本版本 v" + (verTag.src.split("v=")[1] || "?");
