@@ -836,10 +836,11 @@ def admin_review_keep(body: ReviewKeepBody, user: str = Depends(current_user)):
         conn.close()
 
 
-@app.get("/api/admin/browse")
-def admin_browse(user: str = Depends(current_user)):
-    """全库回看(只读):全部定稿图清单,含定稿框/类别/候选数/改动次数,供前端筛选与抽查。"""
-    require_admin(user)
+@app.get("/api/browse")
+def browse(user: str = Depends(current_user)):
+    """全库回看(只读,全员可用):全部定稿图清单,含定稿框/类别/候选数/改动次数。"""
+    if not user:
+        raise HTTPException(401, "请先登录")
     conn = connect()
     try:
         cands_n = {r["stem"]: r["n"] for r in conn.execute(

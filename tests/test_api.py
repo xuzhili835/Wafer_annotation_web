@@ -848,13 +848,12 @@ def test_admin_review_list_keep_and_browse(client):
     rl = client.get("/api/admin/review-list", headers=H("cmx")).json()["groups"]
     b = [x for x in rl["B"] if x["stem"] == "img_01"]
     assert b and b[0]["suggest"]["by"] == "hce" and b[0]["suggest"]["nbox"] == 1
-    # 回看:全部定稿图,含框明细与统计字段
-    br = client.get("/api/admin/browse", headers=H("cmx")).json()["list"]
+    # 回看(全员只读):全部定稿图,含框明细与统计字段;复核清单仍仅管理员
+    br = client.get("/api/browse", headers=H("hce")).json()["list"]
     assert len(br) >= 3
     sample = next(x for x in br if x["stem"] == "img_01")
     assert sample["empty"] is True and sample["codes"] == [] and sample["cands"] >= 2
     assert client.get("/api/admin/review-list", headers=H("hce")).status_code == 403
-    assert client.get("/api/admin/browse", headers=H("hce")).status_code == 403
 
 
 def test_admin_review_adjudicated_stays_closed(client):

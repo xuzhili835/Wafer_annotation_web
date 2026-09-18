@@ -129,7 +129,7 @@ $("nav").addEventListener("click", async (e) => {
   const b = e.target.closest("button[data-view]");
   if (!b) return;
   document.querySelectorAll("#nav button").forEach((x) => x.classList.toggle("active", x === b));
-  ["annotate", "progress", "review", "admin", "export", "help"].forEach((v) =>
+  ["annotate", "progress", "review", "admin", "browse", "export", "help"].forEach((v) =>
     $("view-" + v).classList.toggle("hidden", v !== b.dataset.view));
   if (b.dataset.view === "progress") { loadProgress(); startProgressPolling(); }
   else stopProgressPolling();
@@ -137,6 +137,7 @@ $("nav").addEventListener("click", async (e) => {
   else stopTopPolling();
   if (b.dataset.view === "review") { clearCmtBadge(); loadArb(); }
   if (b.dataset.view === "admin") { state.admSec = "queue"; loadAdmin(); }
+  if (b.dataset.view === "browse") loadBrowse();
   if (b.dataset.view === "export") loadSeal();
 });
 
@@ -1283,13 +1284,9 @@ $("admTabs").onclick = (e) => {
   document.querySelectorAll("#admTabs [data-admsec]").forEach((x) => x.classList.toggle("on", x === b));
   const sec = state.admSec;
   $("admSecReopen").classList.toggle("hidden", sec !== "queue");
-  $("admGridDiv").classList.toggle("hidden", sec === "browse");
   $("admQWrap").classList.toggle("hidden", sec !== "queue");
   $("admRWrap").classList.toggle("hidden", sec !== "review");
-  $("admSecBrowse").classList.toggle("hidden", sec !== "browse");
-  $("admProgress").classList.toggle("hidden", sec === "browse");
   if (sec === "review") loadReview();
-  if (sec === "browse") loadBrowse();
 };
 $("admKeep").onclick = async () => {
   if (!state.admStem) return;
@@ -1343,7 +1340,7 @@ function renderReview() {
 }
 
 async function loadBrowse() {
-  const r = await api("/api/admin/browse");
+  const r = await api("/api/browse");
   state.bkAll = r.list;
   state.bkFilter = "all";
   renderBrowse();
@@ -1436,6 +1433,7 @@ function bkShow(o) {
   img.src = "/api/image/" + o.stem + ".webp";
 }
 $("bkBack").onclick = () => { $("bkDetail").classList.add("hidden"); };
+$("bkRefresh").onclick = () => loadBrowse();
 
 /* ---------- 打包前本地校验(拖入文件夹,纯本地不上传;总览网格 + 单张放大) ---------- */
 const vf = { items: [], idx: 0, img: null, url: null, filter: "all", pending: 0 };
