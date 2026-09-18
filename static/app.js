@@ -1170,6 +1170,34 @@ function drawAdm() {
     state.admFocus);
 }
 
+
+/* ---------- 画布缩放:Ctrl+滚轮 1x~6x,双击复位;坐标映射走 getBoundingClientRect,画框精度不受影响 ---------- */
+function makeZoomable(wrap, cvs) {
+  if (!wrap || !cvs) return;
+  wrap.style.overflow = "auto";
+  wrap.title = "Ctrl+滚轮缩放,双击复位";
+  let scale = 1;
+  const apply = () => {
+    // 隐藏视图量不到高度,首次缩放(可见态)再定容器上限:放大不撑破布局,容器内出滚动条
+    if (scale > 1 && !wrap.style.maxHeight) {
+      const h = Math.round(wrap.getBoundingClientRect().height);
+      if (h > 40) wrap.style.maxHeight = h + "px";
+    }
+    cvs.style.width = (scale * 100) + "%";
+    cvs.style.height = "auto";
+  };
+  cvs.addEventListener("wheel", (e) => {
+    if (!e.ctrlKey) return;                              // 不带 Ctrl 的滚轮保持页面正常滚动
+    e.preventDefault();                                  // 拦下浏览器整页缩放
+    scale = Math.min(6, Math.max(1, scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    apply();
+  }, { passive: false });
+  cvs.addEventListener("dblclick", () => { scale = 1; apply(); wrap.scrollTo(0, 0); });
+}
+makeZoomable(document.querySelector(".canvas-wrap"), cv);                  // 标注画布
+makeZoomable(document.querySelector(".canvas-wrap.small"), $("rv"));       // 盲审面板画布
+makeZoomable(document.querySelector(".adm-canvas-wrap"), $("admCv"));      // 管理台裁定区画布
+
 /* ---------- 导出与封板 ---------- */
 document.querySelectorAll("[data-exp]").forEach((b) => {
   b.onclick = async () => {
