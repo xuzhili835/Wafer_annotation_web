@@ -729,12 +729,45 @@ def admin_queue(user: str = Depends(current_user)):
             reopened = bool(conn.execute("SELECT 1 FROM disputes WHERE stem=? AND round=?",
                                          (r["stem"], rnd)).fetchone())
             codes = sorted({b["code"] for c in cands for b in json.loads(c["boxes_json"])})
+            holder = _active_claim(r["stem"])
             out.append({"stem": r["stem"], "cands": len(cands), "codes": codes,
-                        "reopened": reopened, "round": rnd})
+                        "reopened": reopened, "round": rnd,
+                        "claim_by": holder["user"] if holder else None})
         out.sort(key=lambda o: (not o["reopened"], -o["cands"], o["stem"]))
         return {"list": out}
     finally:
         conn.close()
+
+
+ADMIN_CLAIMS: dict = {}          # stem -> {"user","ts"};占位只是提示不是锁,单进程内存,重启即清
+CLAIM_TTL = 600                  # 10 分钟无动作自动过期,防人走了占位卡死
+
+
+def _active_claim(stem: str, exclude: str | None = None):
+    import time
+    c = ADMIN_CLAIMS.get(stem)
+    if not c:
+        return None
+    if time.time() - c["ts"] > CLAIM_TTL:
+        ADMIN_CLAIMS.pop(stem, None)
+        return None
+    if exclude and c["user"] == exclude:
+        return None
+    return c
+
+
+class ClaimBody(BaseModel):
+    stem: str
+
+
+@app.post("/api/admin/claim")
+def admin_claim(body: ClaimBody, user: str = Depends(current_user)):
+    """打开裁定区即认领:别人队列里会看到"某某处理中";若此前有他人活跃占位,响应带 by 提醒。"""
+    require_admin(user)
+    prev = _active_claim(body.stem, exclude=user)
+    import time
+    ADMIN_CLAIMS[body.stem] = {"user": user, "ts": time.time()}
+    return {"ok": True, "by": prev["user"] if prev else None}
 
 
 @app.get("/api/admin/candidates")

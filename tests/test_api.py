@@ -817,3 +817,16 @@ def test_admin_reopen_batch_by_code(client):
     q = client.get("/api/admin/queue", headers=H("cmx")).json()["list"]
     o9 = next(x for x in q if x["stem"] == "img_09")
     assert o9["reopened"] is True, "打回后进入「本轮重开」队列"
+
+
+def test_admin_claim_advisory(client):
+    """占位(提示非锁):打开即认领;第二人打开收到第一人提醒;队列带占位人;非管理员 403。"""
+    (db_mod.DATA_DIR / "admin.txt").write_text("cmx\nzj\n", encoding="utf-8")
+    assert client.post("/api/admin/claim", json={"stem": "img_09"},
+                       headers=H("hce")).status_code == 403, "非管理员不能占位"
+    r = client.post("/api/admin/claim", json={"stem": "img_09"}, headers=H("cmx")).json()
+    assert r["by"] is None, "第一个认领无提醒"
+    r = client.post("/api/admin/claim", json={"stem": "img_09"}, headers=H("zj")).json()
+    assert r["by"] == "cmx", "第二人打开应收到 cmx 刚在处理的提醒"
+    q = {o["stem"]: o for o in client.get("/api/admin/queue", headers=H("cmx")).json()["list"]}
+    assert q["img_09"]["claim_by"] == "zj", "队列条目带当前占位人"

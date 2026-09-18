@@ -1081,40 +1081,71 @@ function renderAdmList() {
   const all = state.admQueue || [];
   const CN = (code) => (state.meta.names && state.meta.names[code]) || code;
   const cnt = { reopened: all.filter((o) => o.reopened).length, all: all.length };
-  const list = cur === "reopened" ? all.filter((o) => o.reopened) : all;
+  const base = cur === "reopened" ? all.filter((o) => o.reopened) : all;
+  // 我的类别(多选,含任一即显示):按类分工时各自圈定范围;多缺陷图会在多人片里都出现,先开先得
+  const mine = state.admMine || [];
+  const codeCnt = {};
+  base.forEach((o) => (o.codes || []).forEach((c) => { codeCnt[c] = (codeCnt[c] || 0) + 1; }));
+  const list = mine.length ? base.filter((o) => (o.codes || []).some((c) => mine.includes(c))) : base;
   $("admChips").innerHTML =
     '<button class="chip2' + (cur === "reopened" ? " on" : "") + '" data-admtab="reopened">本轮重开 ' + cnt.reopened + "</button>"
-    + '<button class="chip2' + (cur === "all" ? " on" : "") + '" data-admtab="all">全部待决 ' + cnt.all + "</button>";
+    + '<button class="chip2' + (cur === "all" ? " on" : "") + '" data-admtab="all">全部待决 ' + cnt.all + "</button>"
+    + '<button class="chip2' + (mine.length ? "" : " on") + '" data-admmine="">全部类别</button>'
+    + Object.entries(codeCnt).sort((a, b) => b[1] - a[1]).map(([c, n]) =>
+        '<button class="chip2' + (mine.includes(c) ? " on" : "") + '" data-admmine="' + esc(c)
+        + '" title="多人按类分工:点选你负责的类别,可多选">' + CN(c) + " " + n + "</button>").join("");
   $("admList").innerHTML = list.length
     ? list.map((o) => '<div class="arb-item' + (state.admStem === o.stem ? " active" : "") + '" data-admstem="' + esc(o.stem) + '">'
-        + "<code>" + esc(o.stem) + "</code><span>" + (o.reopened ? '<b class="tag-warn">已打回</b>' : "")
+        + "<code>" + esc(o.stem) + "</code><span>"
+        + (o.claim_by && o.claim_by !== state.me ? '<b class="tag-warn">' + esc(o.claim_by) + " 处理中</b>" : "")
+        + (o.reopened ? '<b class="tag-warn">已打回</b>' : "")
         + o.cands + " 份 · " + o.codes.map(CN).join("/") + "</span></div>").join("")
     : '<p class="hint">' + (cur === "reopened"
         ? "没有待重裁的重开图。要打回一批用上面 ①;要看全部待决切「全部待决」。"
         : "全部待决已清空,干得漂亮!") + "</p>";
   $("admChips").onclick = (e) => {
     const b = e.target.closest("[data-admtab]");
-    if (b) { state.admTab = b.dataset.admtab; renderAdmList(); }
+    if (b) { state.admTab = b.dataset.admtab; renderAdmList(); return; }
+    const m = e.target.closest("[data-admmine]");
+    if (m) {
+      const c = m.dataset.admmine;
+      if (!c) state.admMine = [];
+      else {
+        const set = new Set(state.admMine || []);
+        if (set.has(c)) set.delete(c); else set.add(c);
+        state.admMine = [...set];
+      }
+      renderAdmList();
+    }
   };
   $("admList").onclick = (e) => {
     const it = e.target.closest("[data-admstem]");
     if (it) openAdmStem(it.dataset.admstem, false);    // 普通点击:保持全部视图
   };
-  $("admProgress").textContent = "队列剩余:本轮重开 " + cnt.reopened + " 张 · 全部待决 " + cnt.all + " 张";
+  $("admProgress").textContent = "队列剩余:本轮重开 " + cnt.reopened + " 张 · 全部待决 " + cnt.all + " 张"
+    + (mine.length ? " · 我的类别 " + list.length + " 张" : "");
 }
 async function openAdmStem(stem, focusMine) {
   state.admStem = stem;
   state.admFocus = null;
   state.admFocusMine = !!focusMine;
+  state.admClaimBy = null;
   renderAdmList();
   $("admWork").classList.remove("hidden");
   $("admEmpty").classList.add("hidden");
   $("admTitle").textContent = "加载中…";
-  const d = await api("/api/admin/candidates?stem=" + encodeURIComponent(stem));
+  let claimBy = null;
+  const d = await Promise.all([
+    api("/api/admin/candidates?stem=" + encodeURIComponent(stem)),
+    api("/api/admin/claim", { json: { stem } }).then((r) => { claimBy = r.by || null; })
+  ]).then((rs) => rs[0]).catch(() => null);
   if (state.admStem !== stem) return;
+  if (!d) { $("admTitle").textContent = "加载失败,点列表重试"; return; }
   state.admData = d;
+  state.admClaimBy = claimBy;
   $("admTitle").textContent = stem + " · 第" + d.round + "轮"
-    + (d.final_id ? " · 已定稿(再敲 = 改判)" : " · 未定稿");
+    + (d.final_id ? " · 已定稿(再敲 = 改判)" : " · 未定稿")
+    + (claimBy ? " ⚠ " + claimBy + " 刚在这张上处理" : "");
   const seq = (state.admSeq = (state.admSeq || 0) + 1);
   const img = new Image();
   img.onload = () => { if (seq === state.admSeq) { state.admImg = img; drawAdm(); } };
@@ -1167,7 +1198,8 @@ async function openAdmStem(stem, focusMine) {
     if (!b) return;
     const cid = parseInt(b.dataset.admfin, 10);
     const c = d.candidates.find((x) => x.id === cid);
-    if (!confirm("把 " + stem + " 敲定为「" + c.annotator + "」的这份?")) return;
+    if (!confirm("把 " + stem + " 敲定为「" + c.annotator + "」的这份?"
+        + (state.admClaimBy ? "(注意:" + state.admClaimBy + " 也在处理这张,确定覆盖?)" : ""))) return;
     try {
       await api("/api/admin/finalize", { json: { stem, chosen_id: cid, reason: $("admReason").value.trim() } });
       $("admReason").value = "";
