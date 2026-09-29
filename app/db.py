@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS disputes(
   round INTEGER NOT NULL,          -- 触发的重审轮次
   created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
 );
+-- 第一轮定稿标注参考层(2026-09-29):只读参考,不参与判定/导出;
+-- 由 scripts/import_round1_ref.py 从清库前快照导入,重标时预载提醒小缺陷、无误可直提
+CREATE TABLE IF NOT EXISTS ref_round1(
+  stem TEXT PRIMARY KEY,
+  boxes_json TEXT NOT NULL,
+  is_empty INTEGER NOT NULL,
+  n_boxes INTEGER NOT NULL,
+  final_annotator TEXT,
+  imported_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+);
 CREATE TABLE IF NOT EXISTS seals(
   voter TEXT PRIMARY KEY,
   voted_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))

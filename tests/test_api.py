@@ -945,3 +945,18 @@ def test_light_revoke_unfinalizes_without_promotion(light_client):
     assert rr.status_code == 200 and rr.json().get("light")
     t = light_client.get(f"/api/task/{stem}", headers=H("zj")).json()
     assert not t["final"] and t["final_detail"] is None, "撤销后不得自动扶正其他候选"
+
+
+def test_round1_ref_preload(light_client):
+    """参考层:task 返回第一轮定稿,供前端预载(无误直提/有错就地改)。"""
+    import sqlite3
+    conn = sqlite3.connect(cfg.DB_PATH)
+    conn.execute("INSERT OR REPLACE INTO ref_round1(stem,boxes_json,is_empty,n_boxes,final_annotator)"
+                 " VALUES(?,?,?,?,?)",
+                 ("img_00", '[{"code":"X","x0":1,"y0":2,"x1":9,"y1":8}]', 0, 1, "cmx"))
+    conn.commit(); conn.close()
+    t = light_client.get("/api/task/img_00", headers=H("cmx")).json()
+    assert t["round1_ref"] and t["round1_ref"]["n"] == 1
+    assert t["round1_ref"]["boxes"][0]["code"] == "X"
+    t2 = light_client.get("/api/task/img_01", headers=H("cmx")).json()
+    assert t2["round1_ref"] is None, "没导入参考的图不得虚构"

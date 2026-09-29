@@ -539,6 +539,12 @@ async function loadStem(stem, revise, preset) {
   } else if (t.draft && t.draft.length) {
     state.boxes = t.draft; state.loadedDraft = true;
     annMsg("已恢复未提交的草稿", "ok");
+  } else if (t.round1_ref && !t.round1_ref.is_empty && t.round1_ref.n > 0) {
+    // 第一轮参考层:旧定稿预载——小缺陷提醒 + 无误直提;类名口径当时有误须逐框核对
+    state.boxes = JSON.parse(JSON.stringify(t.round1_ref.boxes));
+    annMsg("已载入第一轮标注 " + t.round1_ref.n + " 框作参考(当时类名口径有误):逐框核对类别——尤其白线(BX)、异物(BYW)、颗粒(KYW)几乎全错过;确认无误直接提交即可", "ok");
+  } else if (t.round1_ref && t.round1_ref.is_empty) {
+    annMsg("第一轮此图标了「无缺陷」。再看一遍——尤其小黑点颗粒(KYW)和白线(BX);确认没有就勾「本图无缺陷」提交", "ok");
   }
   if (t.final && !t.light) annMsg("该图已定稿——你的新提交会作为异议依据,提交后图将重开盲审", "ok");
   else if (t.final && t.light && t.final_detail && t.final_detail.mine) annMsg("这张图你已定稿;发现要改,直接改完再提交即可", "ok");

@@ -508,6 +508,8 @@ def task(stem: str, user: str = Depends(current_user)):
             " ORDER BY submitted_at DESC, id DESC LIMIT 1", (stem, user)).fetchone()
         draft = conn.execute(
             "SELECT boxes_json FROM drafts WHERE stem=? AND annotator=?", (stem, user)).fetchone()
+        ref = conn.execute(
+            "SELECT boxes_json, is_empty, n_boxes FROM ref_round1 WHERE stem=?", (stem,)).fetchone()
         fin = None
         if img["final_id"]:
             f = conn.execute("SELECT * FROM annotations WHERE id=?",
@@ -521,6 +523,9 @@ def task(stem: str, user: str = Depends(current_user)):
             "my_latest": dict(my) if my else None,
             "draft": json.loads(draft["boxes_json"]) if draft else None,
             "final_detail": fin,
+            "round1_ref": ({"boxes": json.loads(ref["boxes_json"]),
+                            "is_empty": bool(ref["is_empty"]), "n": ref["n_boxes"]}
+                           if ref else None),
             "light": LIGHT_MODE,
         }
     finally:
