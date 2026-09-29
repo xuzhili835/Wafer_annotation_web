@@ -365,25 +365,35 @@ def image(stem: str, user: str = Depends(current_user)):
 _REF_CACHE: dict | None = None
 
 
-def _ref_root():
-    return DATA_DIR / "测试集"
+def _ref_roots() -> list:
+    """参照样例根目录,按优先级排序:新批(测试集_*)在前,原「测试集」兜底。
+
+    2026-09-20 甲方补发新测试集(618 图)放到 data/测试集_0920,类目目录结构
+    与原测试集相同;同一张图两批都有时先扫到的根(新批)优先,以其标注为准。"""
+    roots = [p for p in sorted(DATA_DIR.glob("测试集_*")) if p.is_dir()]
+    base = DATA_DIR / "测试集"
+    if base.is_dir():
+        roots.append(base)
+    return roots
 
 
 def _ref_data() -> dict:
-    """解析测试集 VOC XML → {code: [{stem, url, boxes}]}(进程内缓存)。
-    按框码组织而非按目录:目录只代表主打缺陷,XHB/KYW/XQK 等少量伴生缺陷
-    藏在其他目录的图里,按目录分会漏。每类取"该类框数最多"的前 3 张。"""
+    """解析测试集 VOC XML → {code: [{stem, url, boxes}]}(进程内缓存,换数据需重启)。
+    按框码组织而非按目录:目录只代表主打缺陷,XHB/XQK 等少量伴生缺陷
+    藏在其他目录的图里,按目录分会漏。多根合并,(类目目录, stem) 重复时新批优先。"""
     global _REF_CACHE
     if _REF_CACHE is not None:
         return _REF_CACHE
     import re
     import xml.etree.ElementTree as ET
     from collections import Counter
-    root = _ref_root()
     by_code: dict[str, list] = {}
-    if root.is_dir():
+    seen: set = set()
+    for root in _ref_roots():
         for xf in sorted(root.rglob("*.xml")):
             if not re.fullmatch(r"[A-Z0-9]{1,8}", xf.parent.name):
+                continue
+            if (xf.parent.name, xf.stem) in seen:
                 continue
             try:
                 rt = ET.parse(xf).getroot()
@@ -405,6 +415,7 @@ def _ref_data() -> dict:
                     continue
             if not boxes:
                 continue
+            seen.add((xf.parent.name, xf.stem))
             entry = {"stem": xf.stem, "dir": xf.parent.name, "boxes": boxes}
             for code, n in Counter(b["code"] for b in boxes).items():
                 by_code.setdefault(code, []).append(dict(entry, n=n))
@@ -428,13 +439,17 @@ def ref_image(code: str, fname: str, user: str = Depends(current_user)):
     import re
     if not re.fullmatch(r"[A-Z0-9]{1,8}", code) or not re.fullmatch(r"[A-Za-z0-9._-]+", fname):
         raise HTTPException(404, "没有这张图")
-    root = _ref_root()
-    src = root / code / fname
-    try:
-        src.resolve().relative_to(root.resolve())
-    except ValueError:
-        raise HTTPException(404, "没有这张图")
-    if not src.is_file():
+    src = None
+    for root in _ref_roots():
+        cand = root / code / fname
+        try:
+            cand.resolve().relative_to(root.resolve())
+        except ValueError:
+            continue
+        if cand.is_file():
+            src = cand
+            break
+    if src is None:
         raise HTTPException(404, "没有这张图")
     webp = DATA_DIR / ".webp_cache" / f"ref_{code}_{src.stem}.webp"
     headers = {"Cache-Control": "private, max-age=86400"}
