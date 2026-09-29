@@ -188,7 +188,7 @@ async function bootAppInner() {
   await reloadQueue();
   startTopPolling();
   startCommentStream();          // 全局评论推送:任何页面新评论都有轻提醒,点击直达那张图
-  if (!localStorage.getItem("wafer_tut_done_v1")) startTut();
+  if (!localStorage.getItem("wafer_tut_done_v2")) startTut();
 }
 
 /* ---------- 类别按钮 / 参照 ---------- */
@@ -1908,7 +1908,7 @@ function renderTut() {
 $("tutPrev").onclick = () => { if (tutIdx > 0) { tutIdx--; renderTut(); } };
 $("tutNext").onclick = () => {
   if (tutIdx < TUT.length - 1) { tutIdx++; renderTut(); }
-  else { $("tutLayer").classList.add("hidden"); localStorage.setItem("wafer_tut_done_v1", "1"); }
+  else { $("tutLayer").classList.add("hidden"); localStorage.setItem("wafer_tut_done_v2", "1"); }
 };
 $("btnTut").onclick = startTut;
 $("btnTut2").onclick = startTut;
