@@ -5,6 +5,8 @@
 - 标注只追加不改写;分歧自动进入盲审;多数票定稿,平票兜底取最早提交;
 - 仲裁/审阅默认匿名(甲乙丙丁),定稿后解锁真名;
 - 异议重开一轮(round+1,旧票作废);封板 3/4 同意后训练只认终版导出。
+- 轻量模式(config.LIGHT_MODE,2026-09-29 尾声起默认开):提交即定稿、可改他人定稿,
+  盲审/第三人/投票/封板不再被自动触发(接口保留,WAFER_LIGHT=0 可整体切回)。
 """
 from __future__ import annotations
 
@@ -20,9 +22,9 @@ from pydantic import BaseModel, Field
 
 from app import export
 from app.auth import current_user
-from app.config import (ANON_NAMES, CODES, CODE_COLORS, CODE_KEYS, CODE_NAMES,
-                        DATA_DIR, HOST, IOU_MATCH_THR, MEMBERS, PORT, RARE_CODES,
-                        load_admins)
+from app.config import (ANON_NAMES, CODES, CODE_COLORS, CODE_KEYS, LIGHT_MODE,
+                        CODE_NAMES, DATA_DIR, HOST, IOU_MATCH_THR, MEMBERS, PORT,
+                        RARE_CODES, load_admins)
 from app.db import connect, init_db
 
 app = FastAPI(title="Wafer Annotation Web", version="0.1.0")
@@ -47,7 +49,7 @@ def health():
 @app.get("/api/meta")
 def meta():
     return {"codes": list(CODES), "keys": CODE_KEYS, "colors": CODE_COLORS,
-            "names": CODE_NAMES, "rare": sorted(RARE_CODES)}
+            "names": CODE_NAMES, "rare": sorted(RARE_CODES), "light": LIGHT_MODE}
 
 
 # ---------------- 登录 ----------------
@@ -246,6 +248,8 @@ def _final_via(conn, stem: str, final_id: int, rnd: int) -> str:
         (stem,)).fetchone()
     if row and row["note"].startswith("admin:"):
         return "admin"
+    if row and row["note"].startswith("light:"):
+        return "light"
     return _settle_via(conn, stem, final_id, rnd)
 
 
@@ -277,7 +281,12 @@ def _settle_via(conn, stem: str, final_id: int, rnd: int) -> str:
 # ---------------- 队列与任务 ----------------
 @app.get("/api/queue")
 def queue(user: str = Depends(current_user)):
-    """我的标注队列:①分配给我未交 ②分歧未决我没交(交叉) ③其他未定稿我没交 ④已交未定稿 ⑤已定稿(查看)。"""
+    """我的标注队列。
+
+    完整模式:①分配给我未交 ②分歧未决我没交(交叉) ③其他未定稿我没交 ④已交未定稿 ⑤已定稿(查看)。
+    轻量模式(尾声):全员同一个池——待标优先、已定稿殿后(点开可改),分配字段仅作展示;
+    顺序按 hash(用户,图) 稳定洗牌:同一人刷新不变,不同人顺序错开,天然减少撞车。"""
+    import hashlib
     import random
     conn = connect()
     try:
@@ -292,6 +301,13 @@ def queue(user: str = Depends(current_user)):
             "SELECT stem, boxes_json, is_empty, id FROM annotations WHERE revoked=0"
             " ORDER BY submitted_at, id"):
             by_stem.setdefault(r["stem"], []).append(r)
+        final_owner = {}
+        if LIGHT_MODE:
+            # 定稿者名字:轻量模式不再匿名,队列徽标直接显示"谁定的,可改"
+            for r in conn.execute(
+                    "SELECT a.stem, a.annotator FROM annotations a JOIN images i"
+                    " ON i.final_id=a.id WHERE i.final_id IS NOT NULL"):
+                final_owner[r["stem"]] = r["annotator"]
         out = []
         for r in rows:
             stem = r["stem"]
@@ -311,24 +327,39 @@ def queue(user: str = Depends(current_user)):
                 st = "pending"
             assigned = user in (r["assignee_a"], r["assignee_b"])
             submitted = stem in mine
-            if st == "final":
-                pri = 5
-            elif submitted:
-                pri = 4
-            elif st == "conflict" and not submitted:
-                pri = 2 if assigned else 3
-            elif not submitted:
-                pri = 1 if assigned else 6
+            if LIGHT_MODE:
+                if st == "final":
+                    pri = 5
+                elif st == "pending":
+                    pri = 1
+                elif st == "wip":
+                    pri = 2           # 有人交过但没定稿(撤销残留),优先补齐
+                else:                 # ready/conflict:轻量下不应出现,给中位优先级
+                    pri = 3
             else:
-                pri = 7
+                if st == "final":
+                    pri = 5
+                elif submitted:
+                    pri = 4
+                elif st == "conflict" and not submitted:
+                    pri = 2 if assigned else 3
+                elif not submitted:
+                    pri = 1 if assigned else 6
+                else:
+                    pri = 7
             if pri <= 7:
                 out.append({"stem": stem, "status": st, "pri": pri, "assigned": assigned,
-                            "cands": len(cands)})
+                            "cands": len(cands),
+                            **({"final_by": final_owner[stem]} if stem in final_owner else {})})
         for o in out:
             if o["pri"] in (1, 2, 3):
-                o["order"] = random.random()
+                # 稳定洗牌:轻量模式按(用户,图)哈希,不同人顺序错开且刷新不变;
+                # 完整模式保持原随机洗牌(每图 2 人打底,撞车无害)。
+                o["order"] = (int.from_bytes(hashlib.sha256(
+                    f"{user}:{o['stem']}".encode()).digest()[:8], "big")
+                    if LIGHT_MODE else random.random())
         out.sort(key=lambda o: (o["pri"], o.get("order", o["stem"])))
-        return {"queue": out}
+        return {"queue": out, "light": LIGHT_MODE}
     finally:
         conn.close()
 
@@ -477,11 +508,20 @@ def task(stem: str, user: str = Depends(current_user)):
             " ORDER BY submitted_at DESC, id DESC LIMIT 1", (stem, user)).fetchone()
         draft = conn.execute(
             "SELECT boxes_json FROM drafts WHERE stem=? AND annotator=?", (stem, user)).fetchone()
+        fin = None
+        if img["final_id"]:
+            f = conn.execute("SELECT * FROM annotations WHERE id=?",
+                             (img["final_id"],)).fetchone()
+            if f is not None:
+                fin = {"id": f["id"], "by": f["annotator"], "mine": f["annotator"] == user,
+                       "boxes": json.loads(f["boxes_json"]), "is_empty": bool(f["is_empty"])}
         return {
             "stem": stem, "w": img["w"], "h": img["h"],
             "final": bool(img["final_id"]),
             "my_latest": dict(my) if my else None,
             "draft": json.loads(draft["boxes_json"]) if draft else None,
+            "final_detail": fin,
+            "light": LIGHT_MODE,
         }
     finally:
         conn.close()
@@ -571,10 +611,26 @@ def submit(body: SubmitBody, user: str = Depends(current_user)):
             _log_settlement(conn, body.stem, "unseal", img["final_id"],
                             current_round(conn, body.stem),
                             note=f"定稿候选被 {user} 修订,摘牌重裁")
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO annotations(stem,annotator,boxes_json,is_empty) VALUES(?,?,?,?)",
             (body.stem, user, json.dumps(boxes), int(body.is_empty)))
+        ann_id = cur.lastrowid
         conn.execute("DELETE FROM drafts WHERE stem=? AND annotator=?", (body.stem, user))
+        if LIGHT_MODE:
+            # 尾声轻量模式:提交即定稿;若此前是别人的定稿,直接覆盖(旧记录留痕不删)
+            prev = ""
+            if img["final_id"] and img["final_id"] not in old_ids:
+                f = conn.execute("SELECT annotator FROM annotations WHERE id=?",
+                                 (img["final_id"],)).fetchone()
+                prev = f["annotator"] if f else ""
+            conn.execute("UPDATE images SET final_id=? WHERE stem=?", (ann_id, body.stem))
+            note = f"light:{user} 单人提交直接定稿(尾声轻量模式)"
+            if prev:
+                note += f",覆盖 {prev} 的定稿"
+            _log_settlement(conn, body.stem, "final", ann_id,
+                            current_round(conn, body.stem), note=note)
+            conn.commit()
+            return {"ok": True, "final_id": ann_id, "light": True}
         conn.commit()
         result = try_settle(conn, body.stem)
         return {"ok": True, **result}
@@ -600,6 +656,10 @@ def revoke(ann_id: int, user: str = Depends(current_user)):
                             current_round(conn, row["stem"]),
                             note=f"定稿候选被 {user} 撤销,摘牌重裁")
         conn.commit()
+        if LIGHT_MODE:
+            # 轻量模式:撤销即摘牌止步,不自动把别人的候选扶正;
+            # 图回待标池,撤销人(或任何人)改完重交即重新定稿。
+            return {"ok": True, "light": True}
         result = try_settle(conn, row["stem"])
         return {"ok": True, **result}
     finally:

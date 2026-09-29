@@ -159,6 +159,19 @@ async function bootAppInner() {
   if (verTag && $("appVer")) $("appVer").textContent = "脚本版本 v" + (verTag.src.split("v=")[1] || "?");
   const admBtn = document.querySelector('#nav button[data-view="admin"]');
   if (admBtn) admBtn.classList.toggle("hidden", !state.isAdmin);
+  const rvBtn = document.querySelector('#nav button[data-view="review"]');
+  if (rvBtn) rvBtn.classList.toggle("hidden", !!state.meta.light);   // 轻量模式无仲裁
+  if (state.meta.light) {
+    const brand = $("brandSub");
+    if (brand) brand.textContent = "尾声轻量 · 提交即定稿 · 留痕";
+    const opHint = $("opHint");
+    if (opHint) opHint.innerHTML = '每画一笔自动存草稿;<b>提交即定稿</b>;已定稿的图从队列最下方点开可改。';
+    const tag = $("sideTagline");
+    if (tag) tag.innerHTML = "尾声轻量模式 · 提交即定稿<br>别人的定稿点开可改 · 全程留痕";
+    const coop = $("progCoop");
+    if (coop) coop.innerHTML = "<b>协作机制(尾声轻量模式)</b> · 一人提交即定稿,不再双人盲标/仲裁;510 张组内自行分摊(约 130 张/人)," +
+      "队列按账号洗牌、待标在前;别人定的图点开即改,<b>后提交的为准</b>;每次提交/覆盖/撤销全留痕,可回放。";
+  }
   renderCodeBtns();
   renderHelp();
   try { state.refs = await (await fetch("/static/ref/reference.json")).json(); } catch (e) { state.refs = {}; }
@@ -470,7 +483,9 @@ function stepQueue(delta) {
   const todo = state.queue.filter((o) => o.pri <= 3);
   if (!todo.length) {
     state.stem = null;
-    $("annSub").textContent = "你名下的图都标完了!想加标可刷新队列帮队友接力,或去「审阅仲裁」处理分歧。";
+    $("annSub").textContent = (state.meta && state.meta.light)
+      ? "待标的图全标完了!可去队列下方「已定稿」区抽查别人的定稿,不对就点开改。"
+      : "你名下的图都标完了!想加标可刷新队列帮队友接力,或去「审阅仲裁」处理分歧。";
     $("cvStem").textContent = "-";
     ctx.clearRect(0, 0, 640, 640);
     return;
@@ -511,6 +526,12 @@ async function loadStem(stem, revise, preset) {
     state.isEmpty = !!preset.isEmpty;
     $("ckEmpty").checked = state.isEmpty;
     annMsg("已载入「" + (preset.from || "所选候选") + "」的框,改完提交即成为你的新候选", "ok");
+  } else if (t.light && t.final_detail && !t.final_detail.mine) {
+    // 轻量模式:打开别人定稿的图,直接以定稿框为起点改(提交即覆盖)
+    state.boxes = JSON.parse(JSON.stringify(t.final_detail.boxes));
+    state.isEmpty = !!t.final_detail.is_empty;
+    $("ckEmpty").checked = state.isEmpty;
+    annMsg("已载入「" + t.final_detail.by + "」的定稿框:改完提交即覆盖定稿;不改就跳过", "ok");
   } else if (t.my_latest) {
     state.boxes = JSON.parse(JSON.stringify(JSON.parse(t.my_latest.boxes_json)));
     state.isEmpty = !!t.my_latest.is_empty;
@@ -519,7 +540,8 @@ async function loadStem(stem, revise, preset) {
     state.boxes = t.draft; state.loadedDraft = true;
     annMsg("已恢复未提交的草稿", "ok");
   }
-  if (t.final) annMsg("该图已定稿——你的新提交会作为异议依据,提交后图将重开盲审", "ok");
+  if (t.final && !t.light) annMsg("该图已定稿——你的新提交会作为异议依据,提交后图将重开盲审", "ok");
+  else if (t.final && t.light && t.final_detail && t.final_detail.mine) annMsg("这张图你已定稿;发现要改,直接改完再提交即可", "ok");
   render();
 }
 $("ckEmpty").addEventListener("change", (e) => {
@@ -536,7 +558,8 @@ $("btnSubmit").onclick = async () => {
     const r = await api("/api/submit", { json: {
       stem: state.stem, boxes: state.boxes, is_empty: state.isEmpty } });
     let tail = "";
-    if (r.final_id) tail = r.auto === "agree" ? " · 与另一份一致,自动定稿 ✓" : " · 已达成多数,定稿 ✓";
+    if (r.light) tail = " · 已直接定稿 ✓(尾声轻量模式)";
+    else if (r.final_id) tail = r.auto === "agree" ? " · 与另一份一致,自动定稿 ✓" : " · 已达成多数,定稿 ✓";
     else if (r.conflict) tail = " · 与另一份标注不一致,已进盲审(将加派第三人)";
     else tail = " · 已提交,等其他成员标注后自动比对";
     annMsg("提交成功" + tail, "ok");
@@ -1757,9 +1780,18 @@ function renderHelp() {
     "<li><b>画框</b> —— 在缺陷上按住拖拽;点框选中后可拖动/四角缩放/右键或 Delete 删除;<b>小缺陷被大框盖住时,按住 <kbd>Alt</kbd>(或 <kbd>Shift</kbd>)拖拽即可在框内强制新建</b>;</li>" +
     "<li><b>选类别</b> —— 右侧<b>点按钮</b>选类即可,用快捷键(<kbd>1</kbd>~<kbd>9</kbd>,<kbd>0</kbd>,<kbd>Q</kbd>,<kbd>W</kbd>)也行;选中框后按类别键可直接改它的类;</li>" +
     "<li><b>拿不准</b> —— 看参照样例和悬停判定要点;纯无缺陷的图勾「本图无缺陷」或按 <kbd>N</kbd>;</li>" +
-    "<li><b>提交</b> —— <kbd>Enter</kbd> 或点提交;之后图进盲审流程,分歧自动加第三人。</li></ol>";
-  $("helpCoop").innerHTML =
-    '<table class="help-table"><tr><th style="width:130px">机制</th><th>规则</th></tr>' +
+    "<li><b>提交</b> —— <kbd>Enter</kbd> 或点提交;" + ((state.meta && state.meta.light)
+      ? "提交即定稿;已定稿的图点开可改,后提交的为准。</li></ol>"
+      : "之后图进盲审流程,分歧自动加第三人。</li></ol>");
+  const light = !!(state.meta && state.meta.light);
+  $("helpCoop").innerHTML = light
+    ? '<table class="help-table"><tr><th style="width:130px">机制</th><th>规则(尾声轻量模式)</th></tr>' +
+      "<tr><td>怎么标</td><td>一人标即定稿,没有双人盲标和仲裁;510 张组内自行分摊(约 130 张/人),队列按账号洗牌、待标在前。</td></tr>" +
+      "<tr><td>改别人的</td><td>队列最后的「已定稿」图点开即载入原框,改完提交即覆盖,<b>后提交的为准</b>;两人先后都标同一张,以后提交者为准。</td></tr>" +
+      "<tr><td>留痕</td><td>每次提交/覆盖/撤销都是新记录,只追加不改写;谁在何时覆盖了谁,全库回看可查。</td></tr>" +
+      "<tr><td>拿不准</td><td>看参照样例(甲方标准框)和悬停判定要点;群里问一句,直接改,不走流程。</td></tr>" +
+      '<tr><td>导出</td><td>任何人随时可导(留痕 csv / 定稿 csv / VOC XML 包),服务端实时快照,永不"不同步"。</td></tr></table>'
+    : '<table class="help-table"><tr><th style="width:130px">机制</th><th>规则</th></tr>' +
     "<tr><td>分配</td><td>每张图恰好 2 人打底(随机、每人约 255 张);不锁图,想加标随时加,进度板全透明。</td></tr>" +
     "<tr><td>留痕</td><td>每次提交/改判/撤销都是新记录,只追加不改写;可回放、可算每人一致率。</td></tr>" +
     "<tr><td>分歧</td><td>两份不一致 → 自动加派第三人盲标;框数相同且同码框 IoU≥0.6 视为一致。</td></tr>" +
@@ -1852,6 +1884,13 @@ const TUT = [
   { t: "分歧怎么办", b: "两人不一致 → 自动加派第三人盲审 → 僵局全员投票、严格过半定稿;平票不自动定稿,群里协商改票;两份都拿不准可以<b>弃权</b>(只留痕「我看过了」,不计票、不算进定稿,之后可改投覆盖)。<b>定稿前所有人都匿名(甲乙丙丁)</b>,放平心态,你的判断有价值。有异议随时重审,无理由才不受理。" },
   { t: "开始吧!", b: "队列已按你的分配洗好牌,直接开标。规则细节在「帮助与方案」页随时可查。<br><br><b>记住:如实标,不猜目录,不看别人。</b>" },
 ];
+// 尾声轻量模式的引导覆盖(按步骤号替换;完整模式不受影响)
+const TUT_LIGHT = {
+  0: { t: "欢迎来到第二轮重标", b: "还是给 510 张硅片图<b>画框 + 选类别</b>,但这次口径已纠正(类名以按钮和悬停提示为准,别再按「油污/崩边」的老理解找)。<ul><li><b>提交即定稿</b>,不用等第二人</li><li>别人定的图也能改:点开就改,提交即覆盖</li><li>全程留痕,标错可改,别有压力</li></ul>跟着引导走一遍(约 1 分钟)。" },
+  4: { t: "提交与修改", b: "画完点「提交本图」或按 <kbd>Enter</kbd>,<b>每画一笔自动存草稿</b>,崩了不怕。<ul><li><b>提交即定稿</b>,没有盲审和仲裁</li><li>队列最后是已定稿的图,点开直接改,提交即覆盖(后提交为准)</li></ul>" },
+  5: { t: "拿不准怎么办", b: "右侧「参照样例」就是甲方标准框(新考卷优先),悬停类别按钮看判定要点。<ul><li>看到别人定的图不对,直接改,不用商量仲裁</li><li>整图无缺陷:勾「本图无缺陷」或按 <kbd>N</kbd></li></ul>" },
+  6: { t: "开始吧!", b: "队列按你的账号洗牌(刷新不变,不同人顺序错开),待标在前、已定稿殿后。510 张组内自行分摊,标完自己的顺手抽查别人的。<br><br><b>记住:如实标,不猜目录,不看别人。</b>" },
+};
 let tutIdx = 0;
 function startTut() {
   tutIdx = 0;
@@ -1859,7 +1898,7 @@ function startTut() {
   renderTut();
 }
 function renderTut() {
-  const s = TUT[tutIdx];
+  const s = (state.meta && state.meta.light && TUT_LIGHT[tutIdx]) || TUT[tutIdx];
   $("tutStep").textContent = "引导 " + (tutIdx + 1) + " / " + TUT.length;
   $("tutTitle").textContent = s.t;
   $("tutBody").innerHTML = s.b;

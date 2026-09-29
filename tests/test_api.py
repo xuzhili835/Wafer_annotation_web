@@ -67,6 +67,7 @@ def client(tmp_path_factory):
     cfg.TOKENS_FILE = tf
     db_mod.TOKENS_FILE = tf
     main_mod.DATA_DIR = data
+    main_mod.LIGHT_MODE = False   # 协作闭环 = 第一轮完整流程;轻量模式单独在 light_client 测
     if os.path.exists(cfg.DB_PATH):
         os.remove(cfg.DB_PATH)
     from fastapi.testclient import TestClient as TC
@@ -96,6 +97,7 @@ def test_login_and_meta(client):
     assert client.post("/api/login", json={"token": "bad_xxx"}).status_code == 401
     assert client.get("/api/me", headers=H("hce")).json()["name"] == "hce"
     assert len(client.get("/api/meta").json()["codes"]) == 12
+    assert client.get("/api/meta").json()["light"] is False  # 完整模式默认关
 
 
 def test_assignment(client):
@@ -870,3 +872,76 @@ def test_admin_review_adjudicated_stays_closed(client):
         "人工敲定即收口:裁决前的旧分歧不再触发"
     # 收口后管理台能力不变:仍可改判/维持,且依旧收口
     client.post("/api/admin/review-keep", json={"stem": stem}, headers=H("cmx"))
+
+
+# ---------------- 尾声轻量模式(2026-09-29):单人提交即定稿、可改他人定稿 ----------------
+@pytest.fixture(scope="session")
+def light_client(tmp_path_factory):
+    data = _make_data(tmp_path_factory.mktemp("wafer_light"))
+    cfg.DATA_DIR = data
+    db_mod.DATA_DIR = data
+    main_mod.DATA_DIR = data
+    tf = tmp_path_factory.mktemp("tok_light") / "tokens.txt"
+    tf.write_text("\n".join(f"{k}:{v}" for k, v in TOKENS.items()), encoding="utf-8")
+    cfg.TOKENS_FILE = tf
+    db_mod.TOKENS_FILE = tf
+    old_db = (cfg.DB_PATH, db_mod.DB_PATH)
+    cfg.DB_PATH = db_mod.DB_PATH = tmp_path_factory.mktemp("wafer_light_db") / "light.db"
+    main_mod.LIGHT_MODE = True
+    from fastapi.testclient import TestClient as TC
+    with TC(main_mod.app) as c:
+        yield c
+    main_mod.LIGHT_MODE = False
+    cfg.DB_PATH, db_mod.DB_PATH = old_db
+
+
+def test_light_meta_flag(light_client):
+    assert light_client.get("/api/meta").json()["light"] is True
+
+
+def test_light_queue_pending_first_and_stable(light_client):
+    q1 = light_client.get("/api/queue", headers=H("cmx")).json()["queue"]
+    q2 = light_client.get("/api/queue", headers=H("cmx")).json()["queue"]
+    assert [o["stem"] for o in q1] == [o["stem"] for o in q2], "同人刷新顺序应稳定"
+    pris = [o["pri"] for o in q1]
+    assert pris == sorted(pris), "待标(pri 1)应排在已定稿(pri 5)之前"
+
+
+def test_light_submit_finalizes_immediately(light_client):
+    stems = light_client.get("/api/queue", headers=H("cmx")).json()["queue"]
+    stem = next(o["stem"] for o in stems if o["status"] == "pending")
+    r = submit(light_client, "cmx", stem, [B("X", 5, 5, 20, 20)])
+    assert r["ok"] and r.get("light") and r.get("final_id"), r
+    t = light_client.get(f"/api/task/{stem}", headers=H("cmx")).json()
+    assert t["final"] and t["light"]
+    assert t["final_detail"]["mine"] and t["final_detail"]["by"] == "cmx"
+    q = {o["stem"]: o for o in light_client.get("/api/queue", headers=H("hce")).json()["queue"]}
+    assert q[stem]["status"] == "final" and q[stem]["final_by"] == "cmx"
+    rv = light_client.get(f"/api/review/{stem}", headers=H("hce")).json()
+    assert rv["via"] == "light"
+
+
+def test_light_overwrite_other_final(light_client):
+    q = light_client.get("/api/queue", headers=H("hce")).json()["queue"]
+    target = next(o for o in q if o["status"] == "final" and o.get("final_by") == "cmx")
+    stem = target["stem"]
+    t = light_client.get(f"/api/task/{stem}", headers=H("hce")).json()
+    assert t["final_detail"]["by"] == "cmx" and not t["final_detail"]["mine"]
+    assert t["final_detail"]["boxes"] == [{"code": "X", "x0": 5, "y0": 5, "x1": 20, "y1": 20}]
+    r = submit(light_client, "hce", stem, [B("BX", 8, 8, 30, 30)])
+    assert r["light"] and r["final_id"]
+    t2 = light_client.get(f"/api/task/{stem}", headers=H("hce")).json()
+    assert t2["final_detail"]["by"] == "hce" and t2["final_detail"]["boxes"][0]["code"] == "BX"
+    q2 = {o["stem"]: o for o in light_client.get("/api/queue", headers=H("cmx")).json()["queue"]}
+    assert q2[stem]["final_by"] == "hce"
+
+
+def test_light_revoke_unfinalizes_without_promotion(light_client):
+    q = light_client.get("/api/queue", headers=H("zj")).json()["queue"]
+    stem = next(o["stem"] for o in q if o["status"] == "pending")
+    r = submit(light_client, "zj", stem, [B("KD", 2, 2, 9, 9)])
+    ann_id = r["final_id"]
+    rr = light_client.post(f"/api/revoke/{ann_id}", headers=H("zj"))
+    assert rr.status_code == 200 and rr.json().get("light")
+    t = light_client.get(f"/api/task/{stem}", headers=H("zj")).json()
+    assert not t["final"] and t["final_detail"] is None, "撤销后不得自动扶正其他候选"

@@ -40,6 +40,11 @@ CODE_NAMES: dict[str, str] = {
 # 误解所致(按"油污"找、按油污标),第二轮重标要按异物口径认真找,不该再打稀有标。
 RARE_CODES: frozenset[str] = frozenset()
 
+# 尾声轻量模式(2026-09-29 用户拍板:项目尾声没时间跑双人盲标+仲裁):
+# 提交即定稿、可改任何人的定稿;盲审/第三人/投票/封板不再被自动触发。
+# 接口全部保留,置 False(或环境变量 WAFER_LIGHT=0)即恢复第一轮完整协作流程。
+LIGHT_MODE: bool = os.environ.get("WAFER_LIGHT", "1") == "1"
+
 MEMBERS = ("cmx", "hce", "zj", "zzq")
 ANON_NAMES = ("甲", "乙", "丙", "丁")  # 盲审匿名代称(按候选提交先后固定映射)
 
