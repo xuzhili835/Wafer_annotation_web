@@ -155,6 +155,11 @@ async function bootApp() {
 }
 async function bootAppInner() {
   state.meta = await api("/api/meta");
+  // cookie 续期:图片只认 HttpOnly cookie,而 cookie 7 天过期、localStorage 里的令牌长期有效——
+  // 不续的话第 8 天会出现"页面一切正常、图片全裂"(接口走 X-Token 头,图片标签只能带 cookie)。
+  // 每次打开页面静默重登一次,只要人还进得来,cookie 就一直是新的。
+  const tok0 = localStorage.getItem("wafer_token");
+  if (tok0) api("/api/login", { json: { token: tok0 } }).catch(() => {});
   const verTag = document.querySelector('script[src*="app.js"]');
   if (verTag && $("appVer")) $("appVer").textContent = "脚本版本 v" + (verTag.src.split("v=")[1] || "?");
   const admBtn = document.querySelector('#nav button[data-view="admin"]');
@@ -479,6 +484,22 @@ function preloadImages(stems) {
   // 浏览器对同 URL 自动去重、命中 24h 缓存不发包,重复调用零成本;面板真加载时即秒出。
   (stems || []).forEach((s) => { const im = new Image(); im.src = "/api/image/" + s + ".webp"; });
 }
+function loadAuthImg(img, src, ok, fail) {
+  // 图片标签只能带 HttpOnly cookie(发不了 X-Token 头),cookie 失效时接口照常、唯独图全裂,
+  // 用户感知即"图片一直不加载,重登才好"。这里兜底自愈:失败先静默重登刷 cookie,再重试一次。
+  img.onload = ok;
+  img.onerror = async () => {
+    const tok = localStorage.getItem("wafer_token");
+    if (tok && !img.dataset.authRetried) {
+      img.dataset.authRetried = "1";
+      try { await api("/api/login", { json: { token: tok } }); } catch (e) { /* 令牌本身失效则维持失败 */ }
+      img.src = src + (src.includes("?") ? "&" : "?") + "r=" + Date.now();
+      return;
+    }
+    if (fail) fail();
+  };
+  img.src = src;
+}
 function stepQueue(delta) {
   const todo = state.queue.filter((o) => o.pri <= 3);
   if (!todo.length) {
@@ -509,17 +530,17 @@ async function loadStem(stem, revise, preset) {
   state.img = null;
   render();
   const img = new Image();
-  img.onload = () => {
-    if (seq !== state.loadSeq) return;                      // 迟到的旧图不许覆盖新图
-    state.img = img;
-    $("cvStem").textContent = stem + (revise ? " · 回看改判" : "");
-    render();
-  };
-  img.onerror = () => {
-    if (seq !== state.loadSeq) return;
-    $("cvStem").textContent = stem + " · 图片加载失败,点「跳过」或刷新重试";
-  };
-  img.src = "/api/image/" + stem + ".webp";
+  loadAuthImg(img, "/api/image/" + stem + ".webp",
+    () => {
+      if (seq !== state.loadSeq) return;                    // 迟到的旧图不许覆盖新图
+      state.img = img;
+      $("cvStem").textContent = stem + (revise ? " · 回看改判" : "");
+      render();
+    },
+    () => {
+      if (seq !== state.loadSeq) return;
+      $("cvStem").textContent = stem + " · 图片加载失败,点「跳过」或刷新重试";
+    });
   if (preset) {
     // 管理台「改这份」:以所选候选的框为起点改两笔,而非自己的旧记录
     state.boxes = JSON.parse(JSON.stringify(preset.boxes || []));
