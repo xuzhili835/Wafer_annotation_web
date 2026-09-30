@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS images(
   assignee_b TEXT NOT NULL,
   final_id INTEGER,               -- 定稿 annotation id,NULL=未定稿
   priority INTEGER NOT NULL DEFAULT 0,   -- 优先重标级:3=P0 / 2=P1 / 1=P2 / 0=普通(2026-09-30 盘点)
+  sub INTEGER NOT NULL DEFAULT 0,        -- 级内子排序:同 P0 内 考卷同图=0 → 错向=1 → 其他=2 → 纯稀缺=3
   priority_note TEXT                     -- 触发原因(队列/标注页横幅展示)
 );
 CREATE TABLE IF NOT EXISTS annotations(
@@ -133,6 +134,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE images ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
     if "priority_note" not in cols:
         conn.execute("ALTER TABLE images ADD COLUMN priority_note TEXT")
+    if "sub" not in cols:
+        # P0 级内子排序(2026-09-30):考卷同图=0 → 错向=1 → 其他复检=2 → 纯稀缺=3
+        conn.execute("ALTER TABLE images ADD COLUMN sub INTEGER NOT NULL DEFAULT 0")
     conn.commit()
 
 

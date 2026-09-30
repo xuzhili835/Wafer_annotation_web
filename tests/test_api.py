@@ -1008,3 +1008,20 @@ def test_priority_orders_queue_and_task_note(light_client):
     assert first["prio"] == 3 and first["pnote"] == "一轮错向框 KYW×1"
     t = light_client.get(f"/api/task/{pend[1]}", headers=H("cmx")).json()
     assert t["prio"] == 3 and "KYW" in t["pnote"]
+
+
+def test_sub_orders_within_same_priority(light_client):
+    """同 P0 内按 sub 子序:考卷同图(0)排在错向(1)之前;queue 返回 sub。"""
+    import sqlite3
+    q = light_client.get("/api/queue", headers=H("cmx")).json()["queue"]
+    pend = [o["stem"] for o in q if o["status"] == "pending"][:2]
+    assert len(pend) == 2
+    conn = sqlite3.connect(cfg.DB_PATH)
+    conn.execute("UPDATE images SET priority=3, sub=1, priority_note='一轮错向框 BYW×1' WHERE stem=?", (pend[0],))
+    conn.execute("UPDATE images SET priority=3, sub=0, priority_note='考卷同图:按甲方口径逐框校' WHERE stem=?", (pend[1],))
+    conn.commit(); conn.close()
+    q2 = light_client.get("/api/queue", headers=H("cmx")).json()["queue"]
+    p03 = [o for o in q2 if o["status"] == "pending" and o["prio"] == 3]
+    subs = [o["sub"] for o in p03]
+    assert subs == sorted(subs), "同 P0 内应按 sub 升序"
+    assert p03[0]["stem"] == pend[1], "sub=0 的考卷同图应排最前"

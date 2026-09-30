@@ -289,14 +289,15 @@ def queue(user: str = Depends(current_user)):
     轻量模式(尾声):全员同一个池——待标优先、已定稿殿后(点开可改),分配字段仅作展示;
     顺序按 hash(用户,图) 稳定洗牌:同一人刷新不变,不同人顺序错开,天然减少撞车。
     2026-09-30 起:同状态内按优先重标级 priority 降序(P0 优先重标 → P1 → P2 → 普通),
-    级内照旧稳定洗牌;priority/pnote 来自 scripts/import_priority.py 导入的盘点清单。"""
+    级内先按 sub 子序(考卷同图 → 错向 → 其他复检 → 纯稀缺)再稳定洗牌;
+    priority/pnote/sub 来自 scripts/import_priority.py 与 scripts/update_subrank.py。"""
     import hashlib
     import random
     conn = connect()
     try:
         rows = conn.execute(
             "SELECT i.stem, i.final_id, i.assignee_a, i.assignee_b,"
-            " i.priority, i.priority_note FROM images i ORDER BY i.stem"
+            " i.priority, i.priority_note, i.sub FROM images i ORDER BY i.stem"
         ).fetchall()
         mine = {r["stem"]: r for r in conn.execute(
             "SELECT a.* FROM annotations a WHERE a.annotator=? AND a.revoked=0"
@@ -356,6 +357,7 @@ def queue(user: str = Depends(current_user)):
                 out.append({"stem": stem, "status": st, "pri": pri, "assigned": assigned,
                             "cands": len(cands),
                             "prio": r["priority"] or 0, "pnote": r["priority_note"] or "",
+                            "sub": r["sub"] or 0,
                             **({"final_by": final_owner[stem]} if stem in final_owner else {})})
         for o in out:
             if o["pri"] in (1, 2, 3):
@@ -364,7 +366,7 @@ def queue(user: str = Depends(current_user)):
                 o["order"] = (int.from_bytes(hashlib.sha256(
                     f"{user}:{o['stem']}".encode()).digest()[:8], "big")
                     if LIGHT_MODE else random.random())
-        out.sort(key=lambda o: (o["pri"], -o["prio"], o.get("order", o["stem"])))
+        out.sort(key=lambda o: (o["pri"], -o["prio"], o.get("sub", 0), o.get("order", o["stem"])))
         return {"queue": out, "light": LIGHT_MODE}
     finally:
         conn.close()
