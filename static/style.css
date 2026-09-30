@@ -270,3 +270,9 @@ ul.rv-rules li{margin:4px 0}
 .vf-cell canvas{width:100%;border-radius:4px;background:#0b1220}
 .vf-cell-meta{display:flex;justify-content:space-between;gap:4px;font-size:10.5px;
   color:var(--muted);margin-top:2px}
+
+/* 优先重标横幅(2026-09-30):画布下方常驻,按级别着色 */
+.prio-note{font-size:12.5px;border-radius:8px;padding:7px 10px;margin-top:8px;line-height:1.5}
+.prio-note.lv3{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
+.prio-note.lv2{background:#fffbeb;color:#92400e;border:1px solid #fde68a}
+.prio-note.lv1{background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe}

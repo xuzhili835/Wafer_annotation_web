@@ -964,3 +964,47 @@ def test_round1_ref_preload(light_client):
     assert t["round1_ref"]["boxes"][0]["code"] == "X"
     t2 = light_client.get("/api/task/img_01", headers=H("cmx")).json()
     assert t2["round1_ref"] is None, "没导入参考的图不得虚构"
+
+
+# ---------------- 优先重标分级(2026-09-30):priority 列、队列 P0 先行、task 带原因 ----------------
+def test_priority_migration_adds_columns(tmp_path, monkeypatch):
+    """老库(无 priority 列)起服务时平滑升列,数据不动。"""
+    import sqlite3
+    old_db = tmp_path / "old.db"
+    conn = sqlite3.connect(old_db)
+    conn.execute("CREATE TABLE images(stem TEXT PRIMARY KEY, path TEXT NOT NULL,"
+                 " w INTEGER NOT NULL, h INTEGER NOT NULL, assignee_a TEXT NOT NULL,"
+                 " assignee_b TEXT NOT NULL, final_id INTEGER)")
+    conn.execute("INSERT INTO images VALUES('legacy_1','x.png',640,640,'a','b',NULL)")
+    conn.commit(); conn.close()
+    old = (cfg.DB_PATH, db_mod.DB_PATH)
+    cfg.DB_PATH = db_mod.DB_PATH = old_db
+    try:
+        db_mod.init_db()
+        cols = {r[1] for r in sqlite3.connect(old_db).execute("PRAGMA table_info(images)")}
+        assert {"priority", "priority_note"} <= cols
+        row = sqlite3.connect(old_db).execute(
+            "SELECT stem, priority FROM images WHERE stem='legacy_1'").fetchone()
+        assert row == ("legacy_1", 0), "老数据保留且 priority 默认 0"
+    finally:
+        cfg.DB_PATH, db_mod.DB_PATH = old
+
+
+def test_priority_orders_queue_and_task_note(light_client):
+    """pending 内 P0 排最前;task 返回 prio/pnote 供标注页横幅。"""
+    import sqlite3
+    q = light_client.get("/api/queue", headers=H("cmx")).json()["queue"]
+    pend = [o["stem"] for o in q if o["status"] == "pending"][:3]
+    assert len(pend) == 3
+    conn = sqlite3.connect(cfg.DB_PATH)
+    conn.execute("UPDATE images SET priority=0, priority_note='' WHERE stem=?", (pend[0],))
+    conn.execute("UPDATE images SET priority=3, priority_note='一轮错向框 KYW×1' WHERE stem=?", (pend[1],))
+    conn.execute("UPDATE images SET priority=2, priority_note='黑斑系框 HBB×2' WHERE stem=?", (pend[2],))
+    conn.commit(); conn.close()
+    q2 = light_client.get("/api/queue", headers=H("cmx")).json()["queue"]
+    pri_list = [o["prio"] for o in q2 if o["status"] == "pending"]
+    assert pri_list[0] == 3 and pri_list[1] == 2, "pending 内应 P0→P1→P2 递减"
+    first = next(o for o in q2 if o["stem"] == pend[1])
+    assert first["prio"] == 3 and first["pnote"] == "一轮错向框 KYW×1"
+    t = light_client.get(f"/api/task/{pend[1]}", headers=H("cmx")).json()
+    assert t["prio"] == 3 and "KYW" in t["pnote"]

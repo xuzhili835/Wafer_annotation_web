@@ -472,8 +472,9 @@ function paintTopbar(q) {
   const todo = q.filter((o) => o.pri <= 3);
   const revise = q.filter((o) => o.pri === 4);
   const done = q.filter((o) => o.pri === 5).length;
-  $("annSub").textContent = "待标 " + todo.length + " 张 · 我的回看 " + revise.length +
-    " 张 · 全库已定稿 " + done + " / " + q.length;
+  const p0 = todo.filter((o) => o.prio === 3).length;
+  $("annSub").textContent = "待标 " + todo.length + " 张 · P0 优先重标 " + p0 + " 张 · 我的回看 " +
+    revise.length + " 张 · 全库已定稿 " + done + " / " + q.length;
   $("myReviseBox").innerHTML = revise.length
     ? revise.map((o) => '<span class="chip" data-stem="' + esc(o.stem) + '">' + esc(o.stem) + "</span>").join("")
     : '<span class="hint">暂无待回看的图</span>';
@@ -540,10 +541,16 @@ async function loadStem(stem, revise, preset) {
   $("annMsg").classList.add("hidden");                       // 换图后不残留上一张的提示
   state.stem = stem; state.reviseMode = !!revise;
   state.sel = -1; state.undoStack = []; state.loadedDraft = false;
+  $("prioNote").className = "prio-note hidden";              // 换图先撤上一张的优先级横幅
   $("cvStem").textContent = stem + " · 图片加载中…" + (revise ? " · 回看改判" : "");
   const t = await api("/api/task/" + stem);
   if (seq !== state.loadSeq) return;                        // 已切到别的图,本次作废
   state.imgW = t.w; state.imgH = t.h;
+  if (t.prio >= 1 && t.pnote) {
+    const pn = $("prioNote");
+    pn.textContent = (t.prio === 3 ? "P0 优先重标 · " : t.prio === 2 ? "P1 该核对 · " : "P2 抽查 · ") + t.pnote;
+    pn.className = "prio-note lv" + t.prio;
+  }
   state.isEmpty = false; $("ckEmpty").checked = false;
   state.boxes = [];
   state.img = null;

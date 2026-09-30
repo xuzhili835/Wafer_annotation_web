@@ -18,7 +18,9 @@ CREATE TABLE IF NOT EXISTS images(
   h INTEGER NOT NULL,
   assignee_a TEXT NOT NULL,
   assignee_b TEXT NOT NULL,
-  final_id INTEGER                -- 定稿 annotation id,NULL=未定稿
+  final_id INTEGER,               -- 定稿 annotation id,NULL=未定稿
+  priority INTEGER NOT NULL DEFAULT 0,   -- 优先重标级:3=P0 / 2=P1 / 1=P2 / 0=普通(2026-09-30 盘点)
+  priority_note TEXT                     -- 触发原因(队列/标注页横幅展示)
 );
 CREATE TABLE IF NOT EXISTS annotations(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,10 +119,21 @@ def init_db() -> None:
     try:
         conn.executescript(SCHEMA)
         conn.commit()
+        _migrate(conn)
         _ensure_tokens(conn)
         _ensure_images(conn)
     finally:
         conn.close()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """老库平滑升列(CREATE IF NOT EXISTS 不会改已存在的表)。"""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(images)")}
+    if "priority" not in cols:
+        conn.execute("ALTER TABLE images ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
+    if "priority_note" not in cols:
+        conn.execute("ALTER TABLE images ADD COLUMN priority_note TEXT")
+    conn.commit()
 
 
 def _ensure_tokens(conn: sqlite3.Connection) -> None:
