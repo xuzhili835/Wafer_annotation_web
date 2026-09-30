@@ -1025,3 +1025,18 @@ def test_sub_orders_within_same_priority(light_client):
     subs = [o["sub"] for o in p03]
     assert subs == sorted(subs), "同 P0 内应按 sub 升序"
     assert p03[0]["stem"] == pend[1], "sub=0 的考卷同图应排最前"
+
+
+def test_task_returns_exam_twins(light_client, monkeypatch):
+    """考卷同图:task 返回 twins(甲方答案框),前端据此预载。"""
+    from app import main as m
+    q = light_client.get("/api/queue", headers=H("cmx")).json()["queue"]
+    stem = next(o["stem"] for o in q if o["status"] == "pending")
+    monkeypatch.setattr(m, "_EXAM_TWINS",
+                        {stem: {"boxes": [{"code": "KYW", "x0": 10, "y0": 10, "x1": 30, "y1": 30}],
+                                "folder": "KYW"}})
+    t = light_client.get(f"/api/task/{stem}", headers=H("cmx")).json()
+    assert t["twins"]["folder"] == "KYW" and t["twins"]["boxes"][0]["code"] == "KYW"
+    other = next(o["stem"] for o in q if o["status"] == "pending" and o["stem"] != stem)
+    t2 = light_client.get(f"/api/task/{other}", headers=H("cmx")).json()
+    assert t2["twins"] is None

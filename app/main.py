@@ -14,6 +14,7 @@ import collections
 import json
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
@@ -29,6 +30,13 @@ from app.config import (ANON_NAMES, CODES, CODE_COLORS, CODE_KEYS, EXAM_SKIP_COD
 from app.db import connect, init_db
 
 app = FastAPI(title="Wafer Annotation Web", version="0.1.0")
+
+# 考卷同图答案表(stem → 甲方在考卷 xml 里的框):scripts/make_exam_twins.py 生成,随包部署
+try:
+    _EXAM_TWINS: dict = json.loads(
+        (Path(__file__).parent / "exam_twins.json").read_text(encoding="utf-8"))
+except Exception:
+    _EXAM_TWINS = {}
 
 
 @app.on_event("startup")
@@ -525,6 +533,7 @@ def task(stem: str, user: str = Depends(current_user)):
             if f is not None:
                 fin = {"id": f["id"], "by": f["annotator"], "mine": f["annotator"] == user,
                        "boxes": json.loads(f["boxes_json"]), "is_empty": bool(f["is_empty"])}
+        twin = _EXAM_TWINS.get(stem)
         return {
             "stem": stem, "w": img["w"], "h": img["h"],
             "final": bool(img["final_id"]),
@@ -535,6 +544,8 @@ def task(stem: str, user: str = Depends(current_user)):
             "round1_ref": ({"boxes": json.loads(ref["boxes_json"]),
                             "is_empty": bool(ref["is_empty"]), "n": ref["n_boxes"]}
                            if ref else None),
+            # 考卷同图:这张图 md5 等同考卷某图,甲方答案就在考卷 xml 里,预载照抄口径
+            "twins": ({"boxes": twin["boxes"], "folder": twin["folder"]} if twin else None),
             "light": LIGHT_MODE,
         }
     finally:

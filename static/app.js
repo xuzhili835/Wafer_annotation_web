@@ -573,6 +573,10 @@ async function loadStem(stem, revise, preset) {
     state.isEmpty = !!preset.isEmpty;
     $("ckEmpty").checked = state.isEmpty;
     annMsg("已载入「" + (preset.from || "所选候选") + "」的框,改完提交即成为你的新候选", "ok");
+  } else if (t.twins) {
+    // 考卷同图:这张图与考卷某图 md5 相同,预载甲方在考卷里的答案框——照抄口径即可
+    state.boxes = JSON.parse(JSON.stringify(t.twins.boxes));
+    annMsg("考卷同图:已预载甲方在考卷里的答案(" + t.twins.boxes.length + " 框," + t.twins.folder + " 家族)——位置类名照抄即可,若发现明显错框可改后提交", "ok");
   } else if (t.light && t.final_detail && !t.final_detail.mine) {
     // 轻量模式:打开别人定稿的图,直接以定稿框为起点改(提交即覆盖)
     state.boxes = JSON.parse(JSON.stringify(t.final_detail.boxes));
