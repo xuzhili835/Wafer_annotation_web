@@ -96,8 +96,12 @@ def test_login_and_meta(client):
         assert r.status_code == 200 and r.json()["name"] == name
     assert client.post("/api/login", json={"token": "bad_xxx"}).status_code == 401
     assert client.get("/api/me", headers=H("hce")).json()["name"] == "hce"
-    assert len(client.get("/api/meta").json()["codes"]) == 12
-    assert client.get("/api/meta").json()["light"] is False  # 完整模式默认关
+    meta = client.get("/api/meta").json()
+    assert len(meta["codes"]) == 12
+    # 考核面(备忘录第六节):考卷无真值的三类必须标为不计分,前端据此挂角标
+    assert meta["exam_skip"] == ["BYW", "HBB", "XHB"]
+    assert meta["exam_thin"] == {"XQK": 1}
+    assert meta["light"] is False  # 完整模式默认关
 
 
 def test_assignment(client):

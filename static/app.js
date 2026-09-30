@@ -197,13 +197,28 @@ async function bootAppInner() {
 }
 
 /* ---------- 类别按钮 / 参照 ---------- */
+function examTag(code) {
+  // 考核面角标(2026-09-29 逐类覆盖盘点):考卷无真值的类「考卷不计」,个位数框「考卷仅N框」
+  const skip = state.meta.exam_skip || [], thin = state.meta.exam_thin || {};
+  if (skip.includes(code)) return { cls: "nx", label: "考卷不计" };
+  if (thin[code] != null) return { cls: "thin", label: "考卷仅" + thin[code] + "框" };
+  return null;
+}
+function examNote(code) {
+  const t = examTag(code);
+  if (!t) return "";
+  if (t.cls === "nx") return " ⚠ 甲方考卷(新测试集)没有「" + code + "」的真值——考卷不计分;练习册照实标,训练仍然要用。";
+  return " ⚠ 甲方考卷里「" + code + "」只有 " + state.meta.exam_thin[code] + " 框,成绩统计无意义,引用须带框数注。";
+}
 function renderCodeBtns() {
   const m = state.meta;
   $("codeBtns").innerHTML = m.codes.map((c) => {
     const key = m.keys[c], name = m.names[c] || "", rare = m.rare.includes(c);
+    const tag = examTag(c);
     return '<button class="codebtn' + (rare ? " rare" : "") + '" data-code="' + c + '" title="' +
-      esc(CODE_TIPS[c]) + '"><span class="sw" style="background:' + m.colors[c] + '"></span>' +
-      "<b>" + c + "</b><span class=\"cn\">" + esc(name) + "</span><span class=\"k\">" + key + "</span></button>";
+      esc(CODE_TIPS[c] + examNote(c)) + '"><span class="sw" style="background:' + m.colors[c] + '"></span>' +
+      "<b>" + c + "</b><span class=\"cn\">" + esc(name) + "</span><span class=\"k\">" + key + "</span>" +
+      (tag ? '<span class="' + tag.cls + '">' + tag.label + "</span>" : "") + "</button>";
   }).join("");
   $("codeBtns").addEventListener("click", (e) => {
     const b = e.target.closest(".codebtn");
@@ -218,7 +233,7 @@ function setCode(code) {
     b.classList.toggle("active", on);
     b.style.borderColor = on ? state.meta.colors[code] : "";
   });
-  $("codeTips").textContent = "【" + code + " " + (state.meta.names[code] || "") + "】" + CODE_TIPS[code];
+  $("codeTips").textContent = "【" + code + " " + (state.meta.names[code] || "") + "】" + CODE_TIPS[code] + examNote(code);
   renderRefs(code);
 }
 function refLegendHtml(boxes) {
@@ -231,7 +246,11 @@ function refLegendHtml(boxes) {
 function renderRefs(code) {
   const box = $("refBox");
   const list = (state.refs && state.refs[code]) || [];
-  if (!list.length) { box.innerHTML = '<p class="hint">该类暂无参照样例</p>'; return; }
+  const note = examNote(code)
+    ? '<div class="ref-note' + (examTag(code).cls === "thin" ? " thin" : "") + '">'
+      + esc("【" + code + " " + (state.meta.names[code] || "") + "】") + esc(examNote(code).trim()) + "</div>"
+    : "";
+  if (!list.length) { box.innerHTML = note + '<p class="hint">该类暂无参照样例</p>'; return; }
   state.refPage = state.refPage || {};
   state.refPage[code] = state.refPage[code] || 0;
   const per = 4, pages = Math.ceil(list.length / per), page = Math.min(state.refPage[code], pages - 1);
@@ -241,7 +260,7 @@ function renderRefs(code) {
       + '<span class="hint inline">第 ' + (page + 1) + " / " + pages + " 页 · 共 " + list.length + " 张</span>"
       + '<button class="btn" id="refNext">›</button></div>'
     : "";
-  box.innerHTML = nav + '<div id="refPageBox" class="ref-grid"></div>';
+  box.innerHTML = note + nav + '<div id="refPageBox" class="ref-grid"></div>';
   const holder = $("refPageBox");
   list.slice(page * per, page * per + per).forEach((r) => {
     const item = document.createElement("div");
@@ -1828,12 +1847,18 @@ function renderHelp() {
     "<tr><td>封板</td><td>任意一人发起,3/4 同意即锁定;训练只认封板后导出的 VOC XML。</td></tr>" +
     '<tr><td>导出</td><td>任何人随时可导(留痕 csv / 定稿 csv / VOC XML 包),服务端实时快照,永不"不同步"。</td></tr></table>';
   const m = state.meta;
-  $("helpCodes").innerHTML = "<table class=\"help-table\"><tr><th>代码</th><th>中文名</th><th>全库规模(测试集)</th><th>判定要点</th><th>依据</th></tr>" +
+  $("helpCodes").innerHTML = "<table class=\"help-table\"><tr><th>代码</th><th>中文名</th><th>全库规模(测试集)</th><th>考卷</th><th>判定要点</th><th>依据</th></tr>" +
     m.codes.map((c) => "<tr><td><b>" + c + "</b></td><td>" + esc(m.names[c] || "") +
       (m.rare.includes(c) ? ' <span class="chip rare">稀有</span>' : "") + "</td><td>" +
-      esc(CODE_STATS[c] || "") + "</td><td>" + esc(CODE_TIPS[c]) + "</td><td>" +
+      esc(CODE_STATS[c] || "") + "</td><td>" +
+      (m.exam_skip && m.exam_skip.includes(c)
+        ? '<span class="chip nx">不计分</span>'
+        : (m.exam_thin && m.exam_thin[c] != null
+          ? '<span class="chip thin">仅' + m.exam_thin[c] + "框</span>"
+          : '<span class="chip ok">✓ 计分</span>')) + "</td><td>" + esc(CODE_TIPS[c]) + "</td><td>" +
       esc(CODE_BASIS[c] || "") + "</td></tr>").join("") + "</table>" +
-    '<p class="hint small">中文名按 2026-09-20 工程师录音口径 + 新老测试集逐类实拍修正;第一轮的「黑斑系/崩边/油污」理解有误已废弃,重标按本表执行。</p>';
+    '<p class="hint small">中文名按 2026-09-20 工程师录音口径 + 新老测试集逐类实拍修正;第一轮的「黑斑系/崩边/油污」理解有误已废弃,重标按本表执行。' +
+    "考卷=甲方新测试集(309 张独立图):HBB 黑白崩 / BYW 异物 / XHB 小黑崩在考卷里没有真值——照实标、训练要用,但考卷评分不计(练而不考);XQK 考卷仅 1 框,无统计意义。</p>";
   const refs = $("helpRefs");
   refs.innerHTML = "";
   state.refLibOpen = state.refLibOpen || {};

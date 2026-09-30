@@ -22,7 +22,8 @@ from pydantic import BaseModel, Field
 
 from app import export
 from app.auth import current_user
-from app.config import (ANON_NAMES, CODES, CODE_COLORS, CODE_KEYS, LIGHT_MODE,
+from app.config import (ANON_NAMES, CODES, CODE_COLORS, CODE_KEYS, EXAM_SKIP_CODES,
+                        EXAM_THIN_CODES, LIGHT_MODE,
                         CODE_NAMES, DATA_DIR, HOST, IOU_MATCH_THR, MEMBERS, PORT,
                         RARE_CODES, load_admins)
 from app.db import connect, init_db
@@ -49,7 +50,8 @@ def health():
 @app.get("/api/meta")
 def meta():
     return {"codes": list(CODES), "keys": CODE_KEYS, "colors": CODE_COLORS,
-            "names": CODE_NAMES, "rare": sorted(RARE_CODES), "light": LIGHT_MODE}
+            "names": CODE_NAMES, "rare": sorted(RARE_CODES), "light": LIGHT_MODE,
+            "exam_skip": sorted(EXAM_SKIP_CODES), "exam_thin": EXAM_THIN_CODES}
 
 
 # ---------------- 登录 ----------------
